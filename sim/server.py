@@ -53,6 +53,7 @@ class Sim:
         self.lock = threading.RLock()
         self.frames = 0
         self.started_at = time.time()
+        self.version = time.strftime('%m-%d %H:%M:%S')
         self._jpeg = self._blank()
         self._running = True
 
@@ -60,6 +61,8 @@ class Sim:
         self.message = "等待指令"
         self.waypoints: list[dict] = []
         self.wp_index = 0
+        self._cmd_p = self.tip().copy()      # 当前下发给 IK 的位置（限速用）
+        self._wp_t0 = time.time()            # 到达当前关键点的时刻
 
         self.ctrl_target = np.array([0.0, -0.30, 0.90, -0.60, 0.0, *GRIP_OPEN])
         for _ in range(400):
@@ -99,23 +102,43 @@ class Sim:
             self.waypoints = [
                 {"p": cube + [0, 0, 0.060],  "grip": GRIP_OPEN,   "note": "1/7 悬停到方块上方"},
                 {"p": cube + [0, 0, 0.002],  "grip": GRIP_OPEN,   "note": "2/7 下降对准方块"},
-                {"p": cube + [0, 0, 0.002],  "grip": GRIP_CLOSED, "note": "3/7 合爪"},
+                {"p": cube + [0, 0, 0.002],  "grip": GRIP_CLOSED, "note": "3/7 合爪", "dwell": 0.8},
                 {"p": cube + [0, 0, 0.070],  "grip": GRIP_CLOSED, "note": "4/7 抬起"},
                 {"p": plate + [0, 0, 0.075], "grip": GRIP_CLOSED, "note": "5/7 移到盘子上方"},
                 {"p": plate + [0, 0, 0.042], "grip": GRIP_CLOSED, "note": "6/7 下降放盘"},
-                {"p": plate + [0, 0, 0.042], "grip": GRIP_OPEN,   "note": "7/7 松爪"},
+                {"p": plate + [0, 0, 0.042], "grip": GRIP_OPEN,   "note": "7/7 松爪", "dwell": 0.8},
             ]
             self.wp_index = 0
+            self._cmd_p = self.tip().copy()
+            self._wp_t0 = time.time()
         return {"ok": True, "plan": plan.to_dict()}
+
+    def reset(self) -> None:
+        """把场景恢复初始状态，方便反复演示。"""
+        with self.lock:
+            self.data = mujoco.MjData(self.model)
+            self.waypoints = []
+            self.wp_index = 0
+            self.plan = None
+            self.message = "等待指令"
+            self.ctrl_target = np.array([0.0, -0.30, 0.90, -0.60, 0.0, *GRIP_OPEN])
+            self.data.ctrl[:] = self.ctrl_target
+            for _ in range(500):
+                self.data.ctrl[:] = self.ctrl_target
+                mujoco.mj_step(self.model, self.data)
 
     def _advance(self) -> None:
         if self.wp_index >= len(self.waypoints):
             return
         wp = self.waypoints[self.wp_index]
         target = np.asarray(wp["p"], dtype=float)
-        if np.linalg.norm(target - self.tip()) < 0.008:
+        dwell = float(wp.get("dwell", 0.25))
+        arrived = np.linalg.norm(target - self.tip()) < 0.010
+        waited = time.time() - self._wp_t0 > dwell
+        if arrived and waited:
             self.message = wp["note"]
             self.wp_index += 1
+            self._wp_t0 = time.time()
             if self.wp_index >= len(self.waypoints):
                 self.message = "完成：方块已放到盘子上"
 
@@ -129,7 +152,14 @@ class Sim:
                 self._advance()
                 if self.wp_index < len(self.waypoints):
                     wp = self.waypoints[self.wp_index]
-                    q = ik(wp["p"][0], wp["p"][1], wp["p"][2])
+                    dest = np.asarray(wp["p"], dtype=float)
+                    dt = per_frame * step
+                    delta = dest - self._cmd_p
+                    dist = float(np.linalg.norm(delta))
+                    speed = 0.08                      # m/s，慢到能看清
+                    if dist > 1e-9:
+                        self._cmd_p += delta * min(1.0, speed * dt / dist)
+                    q = ik(self._cmd_p[0], self._cmd_p[1], self._cmd_p[2])
                     self.ctrl_target = np.array([*q, 0.0, wp["grip"][0], wp["grip"][1]])
                     self.data.ctrl[:] = self.ctrl_target
 
@@ -159,6 +189,7 @@ class Sim:
                 "step": self.wp_index,
                 "total_steps": len(self.waypoints),
                 "cube": [round(v, 3) for v in self.body_xyz("cube")],
+                "version": self.version,
                 "frames": self.frames,
                 "uptime": round(time.time() - self.started_at, 1),
             }
@@ -191,6 +222,8 @@ PAGE = """<!doctype html>
          background:#161b22; border:1px solid #21262d; border-radius:8px; padding:10px 12px;
          white-space:pre-wrap; font-family:Consolas,monospace; }
   .hint { margin-top:10px; font-size:12px; color:#6e7681; }
+  button.alt { background:#21262d; border:1px solid #30363d; font-weight:500; }
+  .build { margin-top:10px; font-size:12px; color:#6e7681; font-family:Consolas,monospace; }
 </style></head>
 <body><div class="wrap">
   <h1>轻量具身智能体 · 本地 Demo</h1>
@@ -204,9 +237,12 @@ PAGE = """<!doctype html>
     <input id="q" autocomplete="off"
            placeholder="说一句话，比如：把红色方块放到盘子上">
     <button id="b">执行</button>
+    <button type="button" id="demo" class="alt">一键演示</button>
+    <button type="button" id="reset" class="alt">重置</button>
   </form>
   <div class="log" id="log">等待指令……</div>
-  <div class="hint">这里只能下「机器人指令」，不是终端。没配 API key 时会走规则解析，同样听得懂「红色方块」「盘子」。</div>
+  <div class="hint">这里只能下「机器人指令」，不是终端。不确定就点「一键演示」。</div>
+  <div class="build" id="build">正在连接服务……</div>
 </div>
 <script>
 const badge=document.getElementById('badge'), state=document.getElementById('state');
@@ -215,13 +251,14 @@ setInterval(async ()=>{
     const s=await (await fetch('/api/status')).json();
     badge.textContent = 'LIVE · ' + s.frames + ' 帧 · ' + Math.round(s.uptime) + 's';
     state.textContent = s.message;
+    build.textContent = '服务启动于 ' + s.version + '　步骤 ' + s.step + '/' + s.total_steps;
   }catch(e){ badge.textContent='LIVE · 连接断开'; }
 }, 1000);
 const f=document.getElementById('f'), q=document.getElementById('q'),
-      b=document.getElementById('b'), log=document.getElementById('log');
-f.addEventListener('submit', async (e)=>{
-  e.preventDefault();
-  const text=q.value.trim(); if(!text) return;
+      b=document.getElementById('b'), log=document.getElementById('log'),
+      demo=document.getElementById('demo'), reset=document.getElementById('reset'),
+      build=document.getElementById('build');
+async function send(text){
   b.disabled=true; log.textContent='解析中……';
   try{
     const r=await fetch('/api/command',{method:'POST',
@@ -229,10 +266,26 @@ f.addEventListener('submit', async (e)=>{
       body:JSON.stringify({text})});
     const j=await r.json();
     log.textContent = j.ok
-      ? '解析结果：'+JSON.stringify(j.plan,null,2)
+      ? '已收到，机械臂开始动作（看左上角状态）\n解析结果：'+JSON.stringify(j.plan,null,2)
       : '没听懂：'+j.error;
   }catch(err){ log.textContent='请求失败：'+err; }
   b.disabled=false;
+}
+demo.addEventListener('click', async ()=>{
+  q.value='把红色方块放到盘子上';
+  demo.disabled=true;
+  await fetch('/api/reset',{method:'POST'});
+  await new Promise(r=>setTimeout(r,600));      // 等场景复位
+  await send(q.value);
+  demo.disabled=false;
+});
+reset.addEventListener('click', async ()=>{
+  await fetch('/api/reset',{method:'POST'});
+  log.textContent='已重置，可以再来一次。';
+});
+f.addEventListener('submit', (e)=>{
+  e.preventDefault();
+  const text=q.value.trim(); if(text) send(text);
 });
 </script></body></html>"""
 
@@ -252,7 +305,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/index"):
-            self._send(PAGE.encode("utf-8"), "text/html; charset=utf-8")
+            body = PAGE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if self.path == "/api/status":
             self._send(json.dumps(self.sim.status(), ensure_ascii=False).encode("utf-8"),
@@ -274,6 +333,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
+        if self.path == "/api/reset":
+            self.sim.reset()
+            self._send(b'{"ok":true}', "application/json")
+            return
         if self.path != "/api/command":
             self.send_error(404)
             return
