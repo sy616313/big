@@ -45,10 +45,10 @@ class Sim:
         self.site = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "grip")
         self.cam = mujoco.MjvCamera()
         mujoco.mjv_defaultCamera(self.cam)
-        self.cam.lookat[:] = [0.15, -0.03, 0.10]
-        self.cam.distance = 0.80
-        self.cam.azimuth = 140.0
-        self.cam.elevation = -22.0
+        self.cam.lookat[:] = [0.17, -0.04, 0.09]
+        self.cam.distance = 0.72
+        self.cam.azimuth = 138.0
+        self.cam.elevation = -20.0
 
         self.lock = threading.RLock()
         self.frames = 0
@@ -64,7 +64,7 @@ class Sim:
         self._cmd_p = self.tip().copy()      # 当前下发给 IK 的位置（限速用）
         self._wp_t0 = time.time()            # 到达当前关键点的时刻
 
-        self.ctrl_target = np.array([0.0, -0.30, 0.90, -0.60, 0.0, *GRIP_OPEN])
+        self.ctrl_target = np.array([0.0, -0.90, 1.20, -0.50, 0.0, *GRIP_OPEN])
         for _ in range(400):
             self.data.ctrl[:] = self.ctrl_target
             mujoco.mj_step(self.model, self.data)
@@ -121,7 +121,7 @@ class Sim:
             self.wp_index = 0
             self.plan = None
             self.message = "等待指令"
-            self.ctrl_target = np.array([0.0, -0.30, 0.90, -0.60, 0.0, *GRIP_OPEN])
+            self.ctrl_target = np.array([0.0, -0.90, 1.20, -0.50, 0.0, *GRIP_OPEN])
             self.data.ctrl[:] = self.ctrl_target
             for _ in range(500):
                 self.data.ctrl[:] = self.ctrl_target
