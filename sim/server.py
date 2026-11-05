@@ -304,7 +304,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/" or self.path.startswith("/index"):
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path in ("", "/") or path.startswith("/index"):
             body = PAGE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -313,11 +314,11 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if self.path == "/api/status":
+        if path == "/api/status":
             self._send(json.dumps(self.sim.status(), ensure_ascii=False).encode("utf-8"),
                        "application/json; charset=utf-8")
             return
-        if self.path == "/stream":
+        if path == "/stream":
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
@@ -333,11 +334,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
-        if self.path == "/api/reset":
+        path = self.path.split("?", 1)[0]
+        if path == "/api/reset":
             self.sim.reset()
             self._send(b'{"ok":true}', "application/json")
             return
-        if self.path != "/api/command":
+        if path != "/api/command":
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", 0))
