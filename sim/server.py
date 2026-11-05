@@ -245,48 +245,72 @@ PAGE = """<!doctype html>
   <div class="build" id="build">正在连接服务……</div>
 </div>
 <script>
-const badge=document.getElementById('badge'), state=document.getElementById('state');
-setInterval(async ()=>{
-  try{
-    const s=await (await fetch('/api/status')).json();
-    badge.textContent = 'LIVE · ' + s.frames + ' 帧 · ' + Math.round(s.uptime) + 's';
-    state.textContent = s.message;
-    build.textContent = '服务启动于 ' + s.version + '　步骤 ' + s.step + '/' + s.total_steps;
-  }catch(e){ badge.textContent='LIVE · 连接断开'; }
-}, 1000);
-const f=document.getElementById('f'), q=document.getElementById('q'),
-      b=document.getElementById('b'), log=document.getElementById('log'),
-      demo=document.getElementById('demo'), reset=document.getElementById('reset'),
-      build=document.getElementById('build');
-async function send(text){
-  b.disabled=true; log.textContent='解析中……';
-  try{
-    const r=await fetch('/api/command',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text})});
-    const j=await r.json();
-    log.textContent = j.ok
-      ? '已收到，机械臂开始动作（看左上角状态）\n解析结果：'+JSON.stringify(j.plan,null,2)
-      : '没听懂：'+j.error;
-  }catch(err){ log.textContent='请求失败：'+err; }
-  b.disabled=false;
+const $id = (x) => document.getElementById(x);
+const badge = $id('badge'), stateEl = $id('state'), logEl = $id('log'), buildEl = $id('build');
+const form = $id('f'), input = $id('q'), btnRun = $id('b');
+const btnDemo = $id('demo'), btnReset = $id('reset');
+
+async function post(path, body) {
+  const opt = body
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+    : { method: 'POST' };
+  const r = await fetch(path, opt);
+  return r.json();
 }
-demo.addEventListener('click', async ()=>{
-  q.value='把红色方块放到盘子上';
-  demo.disabled=true;
-  await fetch('/api/reset',{method:'POST'});
-  await new Promise(r=>setTimeout(r,600));      // 等场景复位
-  await send(q.value);
-  demo.disabled=false;
-});
-reset.addEventListener('click', async ()=>{
-  await fetch('/api/reset',{method:'POST'});
-  log.textContent='已重置，可以再来一次。';
-});
-f.addEventListener('submit', (e)=>{
+
+function show(j) {
+  if (j.ok && j.plan) {
+    const p = j.plan;
+    logEl.textContent = `已收到指令
+目标：${p.target}
+放到：${p.place}
+坐标：${JSON.stringify(p.target_xy)}`;
+  } else {
+    logEl.textContent = '没听懂：' + (j.error || '未知原因');
+  }
+}
+
+async function run(text) {
+  btnRun.disabled = true;
+  logEl.textContent = '解析中……';
+  try { show(await post('/api/command', { text })); }
+  catch (e) { logEl.textContent = '请求失败：' + e; }
+  btnRun.disabled = false;
+}
+
+form.addEventListener('submit', (e) => {
   e.preventDefault();
-  const text=q.value.trim(); if(text) send(text);
+  const t = input.value.trim();
+  if (t) run(t);
 });
+
+btnDemo.addEventListener('click', async () => {
+  input.value = '把红色方块放到盘子上';
+  btnDemo.disabled = true;
+  try {
+    await post('/api/reset');
+    await new Promise((r) => setTimeout(r, 700));
+    await run(input.value);
+  } finally {
+    btnDemo.disabled = false;
+  }
+});
+
+btnReset.addEventListener('click', async () => {
+  await post('/api/reset');
+  logEl.textContent = '已重置，可以再来一次。';
+});
+
+setInterval(async () => {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    badge.textContent = 'LIVE · ' + s.frames + ' 帧 · ' + Math.round(s.uptime) + 's';
+    stateEl.textContent = s.message;
+    buildEl.textContent = '服务启动于 ' + s.version + '　步骤 ' + s.step + '/' + s.total_steps;
+  } catch (e) {
+    badge.textContent = 'LIVE · 连接断开';
+  }
+}, 1000);
 </script></body></html>"""
 
 
