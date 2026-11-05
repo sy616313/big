@@ -1,0 +1,111 @@
+<mujoco model="simple_arm">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+
+  <visual>
+    <global offwidth="960" offheight="720"/>
+    <headlight ambient="0.35 0.35 0.38" diffuse="0.75 0.75 0.75" specular="0.1 0.1 0.1"/>
+    <map znear="0.01" zfar="20"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient" width="512" height="3072"
+             rgb1="0.96 0.97 0.99" rgb2="0.62 0.68 0.78"/>
+    <texture name="tex_ground" type="2d" builtin="checker" width="512" height="512"
+             rgb1="0.58 0.61 0.66" rgb2="0.52 0.55 0.60"/>
+    <material name="mat_ground" texture="tex_ground" texrepeat="12 12" texuniform="true"/>
+    <texture name="tex_table" type="2d" builtin="checker" width="256" height="256"
+             rgb1="0.80 0.80 0.82" rgb2="0.72 0.72 0.75"/>
+    <material name="mat_table" texture="tex_table" texrepeat="8 8" texuniform="true" reflectance="0.05"/>
+    <material name="mat_arm"   rgba="0.86 0.87 0.90 1"/>
+    <material name="mat_joint" rgba="0.25 0.30 0.38 1"/>
+    <material name="mat_cube"  rgba="0.85 0.18 0.18 1"/>
+    <material name="mat_plate" rgba="0.16 0.45 0.85 1"/>
+    <material name="mat_finger" rgba="0.20 0.22 0.26 1"/>
+  </asset>
+
+  <worldbody>
+    <light name="key" pos="0.6 -0.5 1.2" dir="-0.4 0.4 -1" directional="true"
+           diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
+    <light name="fill" pos="-0.8 0.6 0.9" dir="0.5 -0.5 -1" directional="true"
+           diffuse="0.25 0.25 0.28" specular="0 0 0"/>
+
+    <!-- 地面 -->
+    <geom name="ground" type="plane" size="3 3 0.02" pos="0 0 -0.62" material="mat_ground" contype="1" conaffinity="1"/>
+
+    <!-- 桌面：台面在 z = 0 -->'
+    <geom name="table" type="box" size="0.45 0.40 0.02" pos="0.10 0 -0.02"
+          material="mat_table" contype="1" conaffinity="1"/>
+    <geom name="leg1" type="cylinder" size="0.018 0.30" pos="-0.28 -0.30 -0.32" material="mat_joint"/>
+    <geom name="leg2" type="cylinder" size="0.018 0.30" pos="0.48 -0.30 -0.32" material="mat_joint"/>
+    <geom name="leg3" type="cylinder" size="0.018 0.30" pos="-0.28 0.30 -0.32" material="mat_joint"/>
+    <geom name="leg4" type="cylinder" size="0.018 0.30" pos="0.48 0.30 -0.32" material="mat_joint"/>
+
+    <camera name="front" pos="0.95 -0.85 0.62" xyaxes="0.66 0.75 0 -0.36 0.32 0.88" fovy="45"/>
+    <camera name="side"  pos="0.05 -1.05 0.45" xyaxes="1 0 0 0 0.38 0.92" fovy="45"/>
+
+    <!-- ===== 六轴机械臂 ===== -->
+    <body name="base" pos="0 0 0">
+      <geom name="base_geom" type="cylinder" size="0.070 0.022" pos="0 0 0.022"
+            material="mat_joint" contype="1" conaffinity="1"/>
+      <joint name="j1_yaw" type="hinge" axis="0 0 1" range="-3.05 3.05" damping="0.6" armature="0.01"/>
+
+      <body name="shoulder" pos="0 0 0.044">
+        <joint name="j2_shoulder" type="hinge" axis="0 1 0" range="-1.75 1.35" damping="0.6" armature="0.01"/>
+        <geom type="capsule" size="0.026" fromto="0 0 0 0 0 0.150" material="mat_arm" contype="1" conaffinity="1"/>
+        <geom type="sphere" size="0.032" pos="0 0 0" material="mat_joint" contype="1" conaffinity="1"/>
+
+        <body name="upper_arm" pos="0 0 0.150">
+          <joint name="j3_elbow" type="hinge" axis="0 1 0" range="-2.15 2.15" damping="0.6" armature="0.01"/>
+          <geom type="capsule" size="0.023" fromto="0 0 0 0.200 0 0" material="mat_arm" contype="1" conaffinity="1"/>
+          <geom type="sphere" size="0.028" pos="0 0 0" material="mat_joint" contype="1" conaffinity="1"/>
+
+          <body name="fore_arm" pos="0.200 0 0">
+            <joint name="j4_wrist" type="hinge" axis="0 1 0" range="-2.0 2.0" damping="0.4" armature="0.01"/>
+            <geom type="capsule" size="0.020" fromto="0 0 0 0.120 0 0" material="mat_arm" contype="1" conaffinity="1"/>
+            <geom type="sphere" size="0.024" pos="0 0 0" material="mat_joint" contype="1" conaffinity="1"/>
+
+            <body name="wrist" pos="0.120 0 0">
+              <joint name="j5_roll" type="hinge" axis="1 0 0" range="-3.05 3.05" damping="0.2" armature="0.005"/>
+              <geom type="box" size="0.028 0.030 0.030" pos="0.028 0 0" material="mat_joint" contype="1" conaffinity="1"/>
+
+              <!-- 两指夹爪：左右各一片，末端留 6cm 开口 -->
+              <body name="finger_l" pos="0.056 0.030 0">
+                <joint name="grip_l" type="slide" axis="0 1 0" range="0 0.030" damping="0.05"/>
+                <geom type="box" size="0.030 0.006 0.012" pos="0.030 0 0" material="mat_finger" contype="1" conaffinity="1"/>
+              </body>
+              <body name="finger_r" pos="0.056 -0.030 0">
+                <joint name="grip_r" type="slide" axis="0 1 0" range="-0.030 0" damping="0.05"/>
+                <geom type="box" size="0.030 0.006 0.012" pos="0.030 0 0" material="mat_finger" contype="1" conaffinity="1"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <!-- ===== 待抓取的方块 ===== -->
+    <body name="cube" pos="0.30 0.05 0.018">
+      <freejoint name="cube_free"/>
+      <geom name="cube_geom" type="box" size="0.018 0.018 0.018" material="mat_cube"
+            mass="0.05" contype="1" conaffinity="1" friction="1.2 0.05 0.001"/>
+    </body>
+
+    <!-- ===== 目标盘子 ===== -->
+    <body name="plate" pos="0.22 -0.16 0.006">
+      <geom name="plate_geom" type="cylinder" size="0.055 0.006" material="mat_plate"
+            contype="1" conaffinity="1"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="a1_yaw"      joint="j1_yaw"      kp="45" kv="6" ctrlrange="-3.05 3.05"/>
+    <position name="a2_shoulder" joint="j2_shoulder" kp="70" kv="8" ctrlrange="-1.75 1.35"/>
+    <position name="a3_elbow"    joint="j3_elbow"    kp="55" kv="7" ctrlrange="-2.15 2.15"/>
+    <position name="a4_wrist"    joint="j4_wrist"    kp="25" kv="3" ctrlrange="-2.0 2.0"/>
+    <position name="a5_roll"     joint="j5_roll"     kp="12" kv="1.5" ctrlrange="-3.05 3.05"/>
+    <position name="a6_grip_l"   joint="grip_l"      kp="30" kv="2" ctrlrange="0 0.030"/>
+    <position name="a7_grip_r"   joint="grip_r"      kp="30" kv="2" ctrlrange="-0.030 0"/>
+  </actuator>
+</mujoco>
