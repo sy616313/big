@@ -89,7 +89,7 @@ class Sim:
             v = self.view
             v["az"] = (v["az"] + float(d.get("daz", 0.0))) % 360.0
             v["el"] = max(-88.0, min(88.0, v["el"] + float(d.get("del", 0.0))))
-            v["dist"] = max(0.18, min(3.0, v["dist"] * (1.0 + float(d.get("ddist", 0.0)))))
+            v["dist"] = max(0.20, min(1.15, v["dist"] * (1.0 + float(d.get("ddist", 0.0)))))
 
             dx = float(d.get("dx", 0.0))
             dy = float(d.get("dy", 0.0))
@@ -101,6 +101,8 @@ class Sim:
                 up = np.cross(right, fwd)
                 k = v["dist"] * 0.0016
                 v["look"] = list(np.array(v["look"]) - right * dx * k + up * dy * k)
+                # 平移后统一夹紧，防止看到房间外
+                v["look"] = list(np.clip(v["look"], [-0.12, -0.30, -0.02], [0.46, 0.26, 0.36]))
             self._apply_view()
             return dict(v)
 
