@@ -1,0 +1,14 @@
+# 已安装在 D:\Anaconda3\envs\embodied （Python 3.12）
+#
+# 重要：本机是 RTX 5070 Laptop（Blackwell, 计算能力 sm_120），
+# 必须用 cu128 的 PyTorch 轮子，否则一跑就报
+#   "no kernel image is available for execution on the device"
+#
+# torch 装法：
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#
+--extra-index-url https://mirrors.aliyun.com/pypi/simple
+torch>=2.7
+torchvision>=0.22
+mujoco>=3.2
+lerobot>=0.3

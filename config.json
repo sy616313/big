@@ -1,0 +1,44 @@
+{
+  "scene": {
+    "red_cube":  { "color": "red",  "shape": "cube",  "xy": [0.30, 0.10] },
+    "blue_cube": { "color": "blue", "shape": "cube",  "xy": [0.28, -0.12] },
+    "plate":     { "color": null,   "shape": "plate", "xy": [0.05, -0.05] }
+  },
+  "llm": {
+    "providers": [
+      {
+        "type": "openai_compat",
+        "name": "deepseek",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "timeout": 30,
+        "json_mode": true
+      },
+      {
+        "type": "openai_compat",
+        "name": "qwen",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus",
+        "api_key_env": "DASHSCOPE_API_KEY",
+        "timeout": 30,
+        "json_mode": true
+      },
+      {
+        "type": "openai_compat",
+        "name": "local_ollama",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "model": "qwen2.5:7b-instruct",
+        "api_key_env": "OLLAMA_API_KEY",
+        "timeout": 60,
+        "json_mode": false
+      },
+      {
+        "type": "rule",
+        "name": "rule_fallback"
+      }
+    ],
+    "cache_path": "runs/llm_cache.jsonl",
+    "max_retries": 1
+  }
+}

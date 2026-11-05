@@ -1,0 +1,21 @@
+# 密钥：只放本地，不进 git
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# 训练产物、缓存、数据集：体积大，不进 git
+runs/*
+!runs/.gitkeep
+data/*
+!data/.gitkeep
+*.pt
+*.ckpt
+*.safetensors
+*.mp4
+
+# 编辑器
+.vscode/
+.idea/

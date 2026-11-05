@@ -1,0 +1,12 @@
+# 统一换行符，避免队友（Mac/Linux）拉下来整个文件都显示被改动
+* text=auto
+
+# 二进制文件不要做换行转换
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.pt binary
+*.ckpt binary
+*.safetensors binary
+*.whl binary
+*.zip binary
