@@ -34,7 +34,7 @@ from src.llm import parse as parse_instruction  # noqa: E402
 
 W, H = 800, 600
 FPS = 24
-GRIP_OPEN = (0.030, -0.030)
+GRIP_OPEN = (0.018, -0.018)
 GRIP_CLOSED = (0.000, 0.000)
 
 

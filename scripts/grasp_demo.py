@@ -33,7 +33,7 @@ OUT = ROOT / "runs" / "grasp"
 L1, L2, L3 = 0.150, 0.200, 0.192     # 肩->肘、肘->腕、腕->夹爪中心
 Z0 = 0.044                           # 肩关节高度
 PSI_DOWN = math.pi / 2               # 末端方向角：pi/2 = 竖直向下
-GRIP_OPEN = (0.030, -0.030)
+GRIP_OPEN = (0.018, -0.018)
 GRIP_CLOSED = (0.000, 0.000)
 
 JOINT_LO = np.array([-3.05, -1.75, -2.15, -2.70])
