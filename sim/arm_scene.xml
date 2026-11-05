@@ -5,41 +5,43 @@
 
   <visual>
     <global offwidth="1280" offheight="960" fovy="42"/>
-    <headlight ambient="0.30 0.30 0.33" diffuse="0.55 0.55 0.55" specular="0.10 0.10 0.10"/>
+    <headlight ambient="0.26 0.27 0.30" diffuse="0.50 0.50 0.52" specular="0.12 0.12 0.12"/>
     <map znear="0.005" zfar="40"/>
-    <quality shadowsize="4096" offsamples="8"/>
+    <quality shadowsize="8192" offsamples="16"/>
   </visual>
 
-  <!-- ============================================================
-       材质：全部纯色，不用任何贴图。
-       靠"色差 + 高光 + 明暗"表现金属、橡胶、台面。
-       ============================================================ -->
+  <!-- 材质：纯色，无贴图。靠明暗、色差、高光区分材质 -->
   <asset>
-    <material name="metal_light"  rgba="0.78 0.80 0.84 1" specular="0.65" shininess="0.55" reflectance="0.10"/>
-    <material name="metal_mid"    rgba="0.52 0.56 0.62 1" specular="0.55" shininess="0.45" reflectance="0.06"/>
-    <material name="metal_dark"   rgba="0.24 0.28 0.34 1" specular="0.50" shininess="0.50" reflectance="0.04"/>
-    <material name="rubber"       rgba="0.10 0.11 0.13 1" specular="0.05" shininess="0.10"/>
-    <material name="accent"       rgba="0.16 0.45 0.85 1" specular="0.60" shininess="0.60"/>
-    <material name="red_mat"      rgba="0.86 0.20 0.18 1" specular="0.35" shininess="0.35"/>
-    <material name="table_top"    rgba="0.74 0.72 0.69 1" specular="0.20" shininess="0.25" reflectance="0.05"/>
-    <material name="table_edge"   rgba="0.70 0.67 0.62 1" specular="0.15" shininess="0.20"/>
-    <material name="floor_mat"    rgba="0.55 0.58 0.63 1" specular="0.05" shininess="0.10"/>
-    <material name="floor_line"   rgba="0.46 0.49 0.55 1" specular="0.05" shininess="0.10"/>
-    <material name="wall_mat"     rgba="0.90 0.91 0.93 1" specular="0.02" shininess="0.05"/>
-    <material name="wall_trim"    rgba="0.72 0.75 0.79 1" specular="0.05" shininess="0.10"/>
-    <material name="mat_dark"     rgba="0.17 0.21 0.27 1" specular="0.08" shininess="0.15"/>
+    <material name="arm_white"  rgba="0.855 0.865 0.875 1" specular="0.30" shininess="0.35" reflectance="0.06"/>
+    <material name="arm_shade"  rgba="0.760 0.775 0.790 1" specular="0.25" shininess="0.30" reflectance="0.05"/>
+    <material name="arm_dark"   rgba="0.130 0.150 0.175 1" specular="0.45" shininess="0.45" reflectance="0.05"/>
+    <material name="arm_dark2"  rgba="0.230 0.255 0.285 1" specular="0.40" shininess="0.40" reflectance="0.05"/>
+    <material name="steel"      rgba="0.640 0.670 0.700 1" specular="0.80" shininess="0.70" reflectance="0.14"/>
+    <material name="brass"      rgba="0.760 0.640 0.330 1" specular="0.85" shininess="0.75" reflectance="0.18"/>
+    <material name="rubber"     rgba="0.085 0.090 0.100 1" specular="0.06" shininess="0.10"/>
+    <material name="accent"     rgba="0.130 0.420 0.820 1" specular="0.60" shininess="0.60"/>
+    <material name="led_green"  rgba="0.250 0.950 0.450 1" specular="0.90" shininess="0.90"/>
+    <material name="led_red"    rgba="0.950 0.280 0.220 1" specular="0.90" shininess="0.90"/>
+    <material name="red_mat"    rgba="0.870 0.190 0.170 1" specular="0.40" shininess="0.40"/>
+    <material name="table_top"  rgba="0.720 0.700 0.670 1" specular="0.28" shininess="0.30" reflectance="0.07"/>
+    <material name="table_edge" rgba="0.580 0.560 0.535 1" specular="0.20" shininess="0.25"/>
+    <material name="mat_pad"    rgba="0.155 0.190 0.245 1" specular="0.12" shininess="0.18"/>
+    <material name="floor_mat"  rgba="0.560 0.590 0.635 1" specular="0.06" shininess="0.12"/>
+    <material name="floor_line" rgba="0.470 0.500 0.555 1" specular="0.06" shininess="0.12"/>
+    <material name="wall_mat"   rgba="0.895 0.905 0.920 1" specular="0.03" shininess="0.06"/>
+    <material name="wall_trim"  rgba="0.700 0.725 0.760 1" specular="0.06" shininess="0.12"/>
   </asset>
 
   <worldbody>
-    <!-- ================= 灯光 ================= -->
-    <light name="key"  pos="0.75 -0.65 1.35" dir="-0.35 0.32 -1" directional="true"
-           diffuse="0.85 0.85 0.86" specular="0.25 0.25 0.25" castshadow="true"/>
-    <light name="fill" pos="-1.0 0.9 0.9" dir="0.55 -0.5 -0.6" directional="true"
-           diffuse="0.32 0.33 0.36" specular="0.05 0.05 0.05" castshadow="false"/>
-    <light name="rim"  pos="0.1 1.2 1.1" dir="0 -0.7 -0.7" directional="true"
-           diffuse="0.28 0.29 0.31" specular="0.15 0.15 0.15" castshadow="false"/>
+    <!-- 灯光：主光 + 补光 + 轮廓光 -->
+    <light name="key"  pos="0.70 -0.55 1.25" dir="-0.30 0.28 -1" directional="true"
+           diffuse="0.78 0.78 0.80" specular="0.30 0.30 0.30" castshadow="true"/>
+    <light name="fill" pos="-0.95 0.85 0.75" dir="0.55 -0.48 -0.55" directional="true"
+           diffuse="0.30 0.32 0.36" specular="0.05 0.05 0.05"/>
+    <light name="rim"  pos="0.15 1.15 0.95" dir="0 -0.75 -0.65" directional="true"
+           diffuse="0.34 0.33 0.30" specular="0.20 0.18 0.14"/>
 
-    <!-- ================= 地面 + 网格线（纯几何，48 条细条） ================= -->
+    <!-- 地面 + 网格线 -->
     <geom name="floor" type="box" size="2.6 2.6 0.02" pos="0 0 -0.622"
           material="floor_mat" contype="1" conaffinity="1"/>
     <geom name="gx0" type="box" size="2.6 0.003 0.001" pos="0 -1.20 -0.600" material="floor_line" contype="0" conaffinity="0"/>
@@ -59,93 +61,133 @@
     <geom name="gy6" type="box" size="0.003 2.6 0.001" pos=" 0.60 0 -0.600" material="floor_line" contype="0" conaffinity="0"/>
     <geom name="gy7" type="box" size="0.003 2.6 0.001" pos=" 0.90 0 -0.600" material="floor_line" contype="0" conaffinity="0"/>
 
-    <!-- ================= 三面墙 + 踢脚线（挡掉黑背景） ================= -->
+    <!-- 三面墙 -->
     <geom name="wall_back"  type="box" size="2.0 0.02 1.30" pos=" 0.00 1.30 -0.02" material="wall_mat" contype="0" conaffinity="0"/>
     <geom name="wall_left"  type="box" size="0.02 1.30 1.30" pos="-1.60 0.00 -0.02" material="wall_mat" contype="0" conaffinity="0"/>
     <geom name="wall_right" type="box" size="0.02 1.30 1.30" pos=" 1.60 0.00 -0.02" material="wall_mat" contype="0" conaffinity="0"/>
     <geom name="skirt_back"  type="box" size="2.0 0.028 0.05" pos=" 0.00 1.285 -0.575" material="wall_trim" contype="0" conaffinity="0"/>
-    <geom name="wall_line1" type="box" size="2.0 0.014 0.010" pos=" 0.00 1.286  0.34" material="wall_trim" contype="0" conaffinity="0"/>
-    <geom name="wall_line2" type="box" size="2.0 0.014 0.010" pos=" 0.00 1.286  0.92" material="wall_trim" contype="0" conaffinity="0"/>
     <geom name="skirt_left"  type="box" size="0.028 1.30 0.05" pos="-1.585 0.00 -0.575" material="wall_trim" contype="0" conaffinity="0"/>
     <geom name="skirt_right" type="box" size="0.028 1.30 0.05" pos=" 1.585 0.00 -0.575" material="wall_trim" contype="0" conaffinity="0"/>
+    <geom name="wall_line1" type="box" size="2.0 0.014 0.008" pos=" 0.00 1.286 0.34" material="wall_trim" contype="0" conaffinity="0"/>
+    <geom name="wall_line2" type="box" size="2.0 0.014 0.008" pos=" 0.00 1.286 0.92" material="wall_trim" contype="0" conaffinity="0"/>
 
-    <!-- ================= 工作台 ================= -->
+    <!-- 工作台：台面 + 倒角 + 包边 + 四角螺钉 + 腿 + 横撑 -->
     <geom name="table" type="box" size="0.50 0.38 0.018" pos="0.12 0 -0.018" material="table_top" contype="1" conaffinity="1"/>
-    <geom name="work_mat" type="box" size="0.21 0.17 0.001" pos="0.18 -0.04 0.001" material="mat_dark" contype="0" conaffinity="0"/>
-    <geom name="table_edge_f" type="box" size="0.50 0.012 0.020" pos="0.12 -0.372 -0.020" material="table_edge" contype="0" conaffinity="0"/>
-    <geom name="table_edge_b" type="box" size="0.50 0.012 0.020" pos="0.12  0.372 -0.020" material="table_edge" contype="0" conaffinity="0"/>
-    <geom name="table_edge_l" type="box" size="0.012 0.372 0.020" pos="-0.368 0 -0.020" material="table_edge" contype="0" conaffinity="0"/>
-    <geom name="table_edge_r" type="box" size="0.012 0.372 0.020" pos="0.608 0 -0.020" material="table_edge" contype="0" conaffinity="0"/>
-    <geom name="leg1" type="cylinder" size="0.017 0.280" pos="-0.30 -0.30 -0.316" material="metal_dark" contype="0" conaffinity="0"/>
-    <geom name="leg2" type="cylinder" size="0.017 0.280" pos=" 0.54 -0.30 -0.316" material="metal_dark" contype="0" conaffinity="0"/>
-    <geom name="leg3" type="cylinder" size="0.017 0.280" pos="-0.30  0.30 -0.316" material="metal_dark" contype="0" conaffinity="0"/>
-    <geom name="leg4" type="cylinder" size="0.017 0.280" pos=" 0.54  0.30 -0.316" material="metal_dark" contype="0" conaffinity="0"/>
-    <geom name="foot1" type="cylinder" size="0.026 0.006" pos="-0.30 -0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
-    <geom name="foot2" type="cylinder" size="0.026 0.006" pos=" 0.54 -0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
-    <geom name="foot3" type="cylinder" size="0.026 0.006" pos="-0.30  0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
-    <geom name="foot4" type="cylinder" size="0.026 0.006" pos=" 0.54  0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
-    <geom name="brace1" type="box" size="0.42 0.009 0.012" pos="0.12 -0.30 -0.50" material="metal_mid" contype="0" conaffinity="0"/>
-    <geom name="brace2" type="box" size="0.42 0.009 0.012" pos="0.12  0.30 -0.50" material="metal_mid" contype="0" conaffinity="0"/>
+    <geom name="chamfer_f" type="box" size="0.505 0.013 0.005" pos="0.12 -0.375 -0.005" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="chamfer_b" type="box" size="0.505 0.013 0.005" pos="0.12  0.375 -0.005" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="chamfer_l" type="box" size="0.013 0.380 0.005" pos="-0.373 0 -0.005" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="chamfer_r" type="box" size="0.013 0.380 0.005" pos="0.613 0 -0.005" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="edge_f" type="box" size="0.50 0.010 0.016" pos="0.12 -0.372 -0.022" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="edge_b" type="box" size="0.50 0.010 0.016" pos="0.12  0.372 -0.022" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="edge_l" type="box" size="0.010 0.372 0.016" pos="-0.368 0 -0.022" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="edge_r" type="box" size="0.010 0.372 0.016" pos="0.608 0 -0.022" material="table_edge" contype="0" conaffinity="0"/>
+    <geom name="tscrew1" type="cylinder" size="0.0055 0.0018" pos="-0.348 -0.338 0.001" material="steel" contype="0" conaffinity="0"/>
+    <geom name="tscrew2" type="cylinder" size="0.0055 0.0018" pos=" 0.588 -0.338 0.001" material="steel" contype="0" conaffinity="0"/>
+    <geom name="tscrew3" type="cylinder" size="0.0055 0.0018" pos="-0.348  0.338 0.001" material="steel" contype="0" conaffinity="0"/>
+    <geom name="tscrew4" type="cylinder" size="0.0055 0.0018" pos=" 0.588  0.338 0.001" material="steel" contype="0" conaffinity="0"/>
+    <geom name="leg1" type="cylinder" size="0.017 0.280" pos="-0.30 -0.30 -0.316" material="arm_dark2" contype="0" conaffinity="0"/>
+    <geom name="leg2" type="cylinder" size="0.017 0.280" pos=" 0.54 -0.30 -0.316" material="arm_dark2" contype="0" conaffinity="0"/>
+    <geom name="leg3" type="cylinder" size="0.017 0.280" pos="-0.30  0.30 -0.316" material="arm_dark2" contype="0" conaffinity="0"/>
+    <geom name="leg4" type="cylinder" size="0.017 0.280" pos=" 0.54  0.30 -0.316" material="arm_dark2" contype="0" conaffinity="0"/>
+    <geom name="foot1" type="cylinder" size="0.026 0.007" pos="-0.30 -0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
+    <geom name="foot2" type="cylinder" size="0.026 0.007" pos=" 0.54 -0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
+    <geom name="foot3" type="cylinder" size="0.026 0.007" pos="-0.30  0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
+    <geom name="foot4" type="cylinder" size="0.026 0.007" pos=" 0.54  0.30 -0.596" material="rubber" contype="0" conaffinity="0"/>
+    <geom name="brace_b" type="box" size="0.42 0.008 0.010" pos="0.12 -0.30 -0.505" material="steel" contype="0" conaffinity="0"/>
+    <geom name="brace_f" type="box" size="0.42 0.008 0.010" pos="0.12  0.30 -0.505" material="steel" contype="0" conaffinity="0"/>
+    <geom name="brace_l" type="box" size="0.008 0.30 0.010" pos="-0.30 0 -0.505" material="steel" contype="0" conaffinity="0"/>
+
+    <!-- 桌下控制盒（细节） -->
+    <geom name="ctrl_box" type="box" size="0.072 0.052 0.042" pos="0.44 -0.235 -0.105" material="arm_dark2" contype="0" conaffinity="0"/>
+    <geom name="ctrl_lip" type="box" size="0.076 0.056 0.005" pos="0.44 -0.235 -0.062" material="arm_dark" contype="0" conaffinity="0"/>
+    <geom name="ctrl_led1" type="cylinder" size="0.0038 0.0018" pos="0.408 -0.196 -0.086" material="led_green" contype="0" conaffinity="0"/>
+    <geom name="ctrl_led2" type="cylinder" size="0.0038 0.0018" pos="0.392 -0.196 -0.086" material="led_red" contype="0" conaffinity="0"/>
 
     <!-- ================= 六轴机械臂 =================
          关节链长度固定：肩->肘 0.150、肘->腕 0.200、腕->夹爪中心 0.192
-         改这些长度必须同步改 sim/kinematics.py
+         只有手指参与碰撞，其余连杆纯视觉（避免自碰撞挡住可达范围）
     -->
     <body name="base" pos="0 0 0">
-      <geom name="base_plate" type="cylinder" size="0.105 0.010" pos="0 0 0.010" material="metal_dark" contype="0" conaffinity="0"/>
-      <geom name="base_ring"  type="cylinder" size="0.092 0.016" pos="0 0 0.026" material="metal_mid" contype="0" conaffinity="0"/>
-      <geom name="base_body"  type="cylinder" size="0.072 0.022" pos="0 0 0.052" material="metal_light" contype="0" conaffinity="0"/>
-      <geom name="base_cap"   type="cylinder" size="0.058 0.006" pos="0 0 0.080" material="metal_dark" contype="0" conaffinity="0"/>
-      <geom name="base_bolt1" type="cylinder" size="0.007 0.006" pos=" 0.085  0.000 0.030" material="metal_dark" contype="0" conaffinity="0"/>
-      <geom name="base_bolt2" type="cylinder" size="0.007 0.006" pos=" 0.042  0.074 0.030" material="metal_dark" contype="0" conaffinity="0"/>
-      <geom name="base_bolt3" type="cylinder" size="0.007 0.006" pos="-0.042  0.074 0.030" material="metal_dark" contype="0" conaffinity="0"/>
-      <geom name="base_bolt4" type="cylinder" size="0.007 0.006" pos="-0.085  0.000 0.030" material="metal_dark" contype="0" conaffinity="0"/>
-      <geom name="base_bolt5" type="cylinder" size="0.007 0.006" pos="-0.042 -0.074 0.030" material="metal_dark" contype="0" conaffinity="0"/>
-      <geom name="base_bolt6" type="cylinder" size="0.007 0.006" pos=" 0.042 -0.074 0.030" material="metal_dark" contype="0" conaffinity="0"/>
+      <!-- 严格堆叠，层与层只在平面上接触，不互相穿插 -->
+      <geom name="base_plate" type="cylinder" size="0.108 0.008" pos="0 0 0.008" material="arm_dark" contype="0" conaffinity="0"/>
+      <geom name="base_ring"  type="cylinder" size="0.094 0.008" pos="0 0 0.024" material="steel" contype="0" conaffinity="0"/>
+      <geom name="base_seam_mid" type="cylinder" size="0.095 0.002" pos="0 0 0.032" material="arm_dark2" contype="0" conaffinity="0"/>
+      <geom name="base_body"  type="cylinder" size="0.078 0.019" pos="0 0 0.053" material="arm_white" contype="0" conaffinity="0"/>
+      <geom name="base_seam_lo" type="cylinder" size="0.080 0.0035" pos="0 0 0.0335" material="arm_dark2" contype="0" conaffinity="0"/>
+      <geom name="base_seam_hi" type="cylinder" size="0.080 0.0025" pos="0 0 0.0735" material="arm_dark2" contype="0" conaffinity="0"/>
+      <geom name="base_band"  type="cylinder" size="0.081 0.004" pos="0 0 0.078" material="arm_dark2" contype="0" conaffinity="0"/>
+      <geom name="base_cap"   type="cylinder" size="0.062 0.004" pos="0 0 0.086" material="arm_dark" contype="0" conaffinity="0"/>
+      <geom name="bb1" type="cylinder" size="0.0065 0.004" pos=" 0.092  0.000 0.016" material="brass" contype="0" conaffinity="0"/>
+      <geom name="bb2" type="cylinder" size="0.0065 0.004" pos=" 0.065  0.065 0.016" material="brass" contype="0" conaffinity="0"/>
+      <geom name="bb3" type="cylinder" size="0.0065 0.004" pos=" 0.000  0.092 0.016" material="brass" contype="0" conaffinity="0"/>
+      <geom name="bb4" type="cylinder" size="0.0065 0.004" pos="-0.065  0.065 0.016" material="brass" contype="0" conaffinity="0"/>
+      <geom name="bb5" type="cylinder" size="0.0065 0.004" pos="-0.092  0.000 0.016" material="brass" contype="0" conaffinity="0"/>
+      <geom name="bb6" type="cylinder" size="0.0065 0.004" pos="-0.065 -0.065 0.016" material="brass" contype="0" conaffinity="0"/>
+      <geom name="bb7" type="cylinder" size="0.0065 0.004" pos=" 0.000 -0.092 0.016" material="brass" contype="0" conaffinity="0"/>
+      <geom name="bb8" type="cylinder" size="0.0065 0.004" pos=" 0.065 -0.065 0.016" material="brass" contype="0" conaffinity="0"/>
       <joint name="j1_yaw" type="hinge" axis="0 0 1" range="-3.05 3.05" damping="0.6" armature="0.01"/>
 
       <body name="shoulder" pos="0 0 0.044">
         <joint name="j2_shoulder" type="hinge" axis="0 1 0" range="-1.75 1.35" damping="0.6" armature="0.01"/>
-        <geom name="shoulder_hub"   type="cylinder" size="0.050 0.040" euler="1.5708 0 0" pos="0 0 0.004" material="metal_mid" contype="0" conaffinity="0"/>
-        <geom name="shoulder_cap_l" type="cylinder" size="0.032 0.010" euler="1.5708 0 0" pos="0  0.042 0.004" material="metal_dark" contype="0" conaffinity="0"/>
-        <geom name="shoulder_cap_r" type="cylinder" size="0.032 0.010" euler="1.5708 0 0" pos="0 -0.042 0.004" material="metal_dark" contype="0" conaffinity="0"/>
-        <geom name="upper_link" type="box" size="0.026 0.030 0.075" pos="0 0 0.079" material="metal_light" contype="0" conaffinity="0"/>
-        <geom name="upper_edge" type="box" size="0.030 0.032 0.008" pos="0 0 0.150" material="metal_mid" contype="0" conaffinity="0"/>
+        <geom name="sh_hub"   type="cylinder" size="0.052 0.038" euler="1.5708 0 0" pos="0 0 0.006" material="arm_white" contype="0" conaffinity="0"/>
+        <geom name="sh_cap_l" type="cylinder" size="0.034 0.009" euler="1.5708 0 0" pos="0  0.043 0.006" material="arm_dark" contype="0" conaffinity="0"/>
+        <geom name="sh_cap_r" type="cylinder" size="0.034 0.009" euler="1.5708 0 0" pos="0 -0.043 0.006" material="arm_dark" contype="0" conaffinity="0"/>
+        <geom name="sh_bolt_l" type="cylinder" size="0.010 0.004" euler="1.5708 0 0" pos="0  0.051 0.006" material="brass" contype="0" conaffinity="0"/>
+        <geom name="sh_bolt_r" type="cylinder" size="0.010 0.004" euler="1.5708 0 0" pos="0 -0.051 0.006" material="brass" contype="0" conaffinity="0"/>
+        <geom name="up_col"    type="box" size="0.028 0.026 0.072" pos="0 0 0.078" material="arm_white" contype="0" conaffinity="0"/>
+        <geom name="up_slot_l" type="box" size="0.0024 0.009 0.050" pos=" 0.029 0 0.078" material="arm_dark" contype="0" conaffinity="0"/>
+        <geom name="up_slot_r" type="box" size="0.0024 0.009 0.050" pos="-0.029 0 0.078" material="arm_dark" contype="0" conaffinity="0"/>
+        <geom name="up_cap"    type="box" size="0.031 0.029 0.007" pos="0 0 0.149" material="arm_dark2" contype="0" conaffinity="0"/>
+        <geom name="up_screw_l" type="cylinder" size="0.005 0.003" euler="0 1.5708 0" pos=" 0.031 0 0.118" material="steel" contype="0" conaffinity="0"/>
+        <geom name="up_screw_r" type="cylinder" size="0.005 0.003" euler="0 1.5708 0" pos="-0.031 0 0.118" material="steel" contype="0" conaffinity="0"/>
 
         <body name="upper_arm" pos="0 0 0.150">
           <joint name="j3_elbow" type="hinge" axis="0 1 0" range="-2.15 2.15" damping="0.6" armature="0.01"/>
-          <geom name="elbow_hub"   type="cylinder" size="0.040 0.052" euler="1.5708 0 0" material="metal_mid" contype="0" conaffinity="0"/>
-          <geom name="elbow_cap_l" type="cylinder" size="0.026 0.008" euler="1.5708 0 0" pos="0  0.054 0" material="metal_dark" contype="0" conaffinity="0"/>
-          <geom name="elbow_cap_r" type="cylinder" size="0.026 0.008" euler="1.5708 0 0" pos="0 -0.054 0" material="metal_dark" contype="0" conaffinity="0"/>
-          <geom name="fore_link"    type="box" size="0.098 0.024 0.020" pos="0.100 0 0" material="metal_light" contype="0" conaffinity="0"/>
-          <geom name="fore_rib_top" type="box" size="0.090 0.010 0.005" pos="0.100 0  0.023" material="metal_mid" contype="0" conaffinity="0"/>
-          <geom name="fore_rib_bot" type="box" size="0.090 0.010 0.005" pos="0.100 0 -0.023" material="metal_mid" contype="0" conaffinity="0"/>
-          <geom name="fore_stripe"  type="box" size="0.028 0.026 0.005" pos="0.050 0 0.019" material="accent" contype="0" conaffinity="0"/>
+          <geom name="el_hub"   type="cylinder" size="0.042 0.050" euler="1.5708 0 0" material="arm_white" contype="0" conaffinity="0"/>
+          <geom name="el_ring"  type="cylinder" size="0.044 0.007" euler="1.5708 0 0" material="arm_dark2" contype="0" conaffinity="0"/>
+          <geom name="el_cap_l" type="cylinder" size="0.028 0.008" euler="1.5708 0 0" pos="0  0.055 0" material="arm_dark" contype="0" conaffinity="0"/>
+          <geom name="el_cap_r" type="cylinder" size="0.028 0.008" euler="1.5708 0 0" pos="0 -0.055 0" material="arm_dark" contype="0" conaffinity="0"/>
+          <geom name="el_bolt_l" type="cylinder" size="0.009 0.004" euler="1.5708 0 0" pos="0  0.062 0" material="brass" contype="0" conaffinity="0"/>
+          <geom name="el_bolt_r" type="cylinder" size="0.009 0.004" euler="1.5708 0 0" pos="0 -0.062 0" material="brass" contype="0" conaffinity="0"/>
+          <geom name="fa_beam"   type="box" size="0.096 0.023 0.019" pos="0.100 0 0" material="arm_white" contype="0" conaffinity="0"/>
+          <geom name="fa_top"    type="box" size="0.086 0.020 0.0035" pos="0.100 0  0.0215" material="arm_shade" contype="0" conaffinity="0"/>
+          <geom name="fa_bot"    type="box" size="0.086 0.020 0.0035" pos="0.100 0 -0.0215" material="arm_shade" contype="0" conaffinity="0"/>
+          <geom name="fa_stripe" type="box" size="0.024 0.0235 0.004" pos="0.044 0 0.0205" material="accent" contype="0" conaffinity="0"/>
+          <geom name="fa_screw1" type="cylinder" size="0.0042 0.003" euler="0 1.5708 0" pos="0.070  0.023 0.010" material="steel" contype="0" conaffinity="0"/>
+          <geom name="fa_screw2" type="cylinder" size="0.0042 0.003" euler="0 1.5708 0" pos="0.070  0.023 -0.010" material="steel" contype="0" conaffinity="0"/>
+          <geom name="fa_screw3" type="cylinder" size="0.0042 0.003" euler="0 1.5708 0" pos="0.128 -0.023 0.000" material="steel" contype="0" conaffinity="0"/>
 
           <body name="fore_arm" pos="0.200 0 0">
             <joint name="j4_wrist" type="hinge" axis="0 1 0" range="-2.7 2.7" damping="0.4" armature="0.01"/>
-            <geom name="wrist_hub"  type="cylinder" size="0.034 0.030" euler="1.5708 0 0" material="metal_mid" contype="0" conaffinity="0"/>
-            <geom name="wrist_link" type="box" size="0.055 0.022 0.018" pos="0.060 0 0" material="metal_light" contype="0" conaffinity="0"/>
+            <geom name="wr_hub"  type="cylinder" size="0.036 0.030" euler="1.5708 0 0" material="arm_white" contype="0" conaffinity="0"/>
+            <geom name="wr_ring" type="cylinder" size="0.038 0.005" euler="1.5708 0 0" material="arm_dark2" contype="0" conaffinity="0"/>
+            <geom name="wr_link" type="box" size="0.050 0.021 0.017" pos="0.058 0 0" material="arm_white" contype="0" conaffinity="0"/>
+            <geom name="wr_top"  type="box" size="0.044 0.018 0.003" pos="0.058 0 0.0185" material="arm_shade" contype="0" conaffinity="0"/>
 
             <body name="wrist" pos="0.120 0 0">
               <joint name="j5_roll" type="hinge" axis="1 0 0" range="-3.05 3.05" damping="0.2" armature="0.005"/>
-              <geom name="flange" type="cylinder" size="0.030 0.010" euler="0 1.5708 0" pos="0.010 0 0" material="metal_dark" contype="0" conaffinity="0"/>
-              <geom name="flange_bolt1" type="cylinder" size="0.004 0.012" euler="0 1.5708 0" pos="0.010  0.020  0.020" material="metal_mid" contype="0" conaffinity="0"/>
-              <geom name="flange_bolt2" type="cylinder" size="0.004 0.012" euler="0 1.5708 0" pos="0.010 -0.020  0.020" material="metal_mid" contype="0" conaffinity="0"/>
-              <geom name="flange_bolt3" type="cylinder" size="0.004 0.012" euler="0 1.5708 0" pos="0.010  0.020 -0.020" material="metal_mid" contype="0" conaffinity="0"/>
-              <geom name="flange_bolt4" type="cylinder" size="0.004 0.012" euler="0 1.5708 0" pos="0.010 -0.020 -0.020" material="metal_mid" contype="0" conaffinity="0"/>
-              <geom name="grip_body" type="box" size="0.024 0.030 0.026" pos="0.036 0 0" material="metal_dark" contype="0" conaffinity="0"/>
+              <geom name="flange"     type="cylinder" size="0.031 0.009" euler="0 1.5708 0" pos="0.008 0 0" material="steel" contype="0" conaffinity="0"/>
+              <geom name="flange_lip" type="cylinder" size="0.026 0.004" euler="0 1.5708 0" pos="0.018 0 0" material="arm_dark2" contype="0" conaffinity="0"/>
+              <geom name="fb1" type="cylinder" size="0.004 0.010" euler="0 1.5708 0" pos="0.008  0.021  0.021" material="brass" contype="0" conaffinity="0"/>
+              <geom name="fb2" type="cylinder" size="0.004 0.010" euler="0 1.5708 0" pos="0.008 -0.021  0.021" material="brass" contype="0" conaffinity="0"/>
+              <geom name="fb3" type="cylinder" size="0.004 0.010" euler="0 1.5708 0" pos="0.008  0.021 -0.021" material="brass" contype="0" conaffinity="0"/>
+              <geom name="fb4" type="cylinder" size="0.004 0.010" euler="0 1.5708 0" pos="0.008 -0.021 -0.021" material="brass" contype="0" conaffinity="0"/>
+              <geom name="grip_body" type="box" size="0.023 0.029 0.025" pos="0.035 0 0" material="arm_dark" contype="0" conaffinity="0"/>
+              <geom name="grip_slot" type="box" size="0.0035 0.019 0.003" pos="0.035 0 0.0265" material="arm_dark2" contype="0" conaffinity="0"/>
+              <geom name="grip_led"  type="cylinder" size="0.0042 0.002" euler="0 1.5708 0" pos="0.014 0.0305 0.013" material="led_green" contype="0" conaffinity="0"/>
               <site name="grip" pos="0.072 0 0" size="0.002" rgba="0 0 0 0"/>
 
               <body name="finger_l" pos="0.056 0.022 0">
                 <joint name="grip_l" type="slide" axis="0 1 0" range="0 0.030" damping="0.05"/>
-                <geom name="finger_l_base" type="box" size="0.014 0.006 0.014" pos="0.004 0 0" material="metal_mid" contype="1" conaffinity="1"/>
-                <geom name="finger_l_pad"  type="box" size="0.012 0.004 0.010" pos="0.020 0 0" material="rubber" contype="1" conaffinity="1"/>
+                <geom name="finger_l_base" type="box" size="0.013 0.006 0.013" pos="0.004 0 0" material="arm_dark2" contype="1" conaffinity="1"/>
+                <geom name="finger_l_pad"  type="box" size="0.011 0.004 0.009" pos="0.019 0 0" material="rubber" contype="1" conaffinity="1"/>
+                <geom name="finger_l_tip"  type="box" size="0.002 0.005 0.010" pos="0.031 0 0" material="steel" contype="0" conaffinity="0"/>
               </body>
               <body name="finger_r" pos="0.056 -0.022 0">
                 <joint name="grip_r" type="slide" axis="0 1 0" range="-0.030 0" damping="0.05"/>
-                <geom name="finger_r_base" type="box" size="0.014 0.006 0.014" pos="0.004 0 0" material="metal_mid" contype="1" conaffinity="1"/>
-                <geom name="finger_r_pad"  type="box" size="0.012 0.004 0.010" pos="0.020 0 0" material="rubber" contype="1" conaffinity="1"/>
+                <geom name="finger_r_base" type="box" size="0.013 0.006 0.013" pos="0.004 0 0" material="arm_dark2" contype="1" conaffinity="1"/>
+                <geom name="finger_r_pad"  type="box" size="0.011 0.004 0.009" pos="0.019 0 0" material="rubber" contype="1" conaffinity="1"/>
+                <geom name="finger_r_tip"  type="box" size="0.002 0.005 0.010" pos="0.031 0 0" material="steel" contype="0" conaffinity="0"/>
               </body>
             </body>
           </body>
@@ -153,7 +195,13 @@
       </body>
     </body>
 
-    <!-- ================= 待操作物体 ================= -->
+    <!-- 工作垫 + 四角螺钉 -->
+    <geom name="work_mat"   type="box" size="0.215 0.170 0.0012" pos="0.185 -0.045 0.001" material="mat_pad" contype="0" conaffinity="0"/>
+    <geom name="mat_sc1" type="cylinder" size="0.004 0.0016" pos="0.006 -0.200 0.002" material="steel" contype="0" conaffinity="0"/>
+    <geom name="mat_sc2" type="cylinder" size="0.004 0.0016" pos="0.364 -0.200 0.002" material="steel" contype="0" conaffinity="0"/>
+    <geom name="mat_sc3" type="cylinder" size="0.004 0.0016" pos="0.006  0.110 0.002" material="steel" contype="0" conaffinity="0"/>
+    <geom name="mat_sc4" type="cylinder" size="0.004 0.0016" pos="0.364  0.110 0.002" material="steel" contype="0" conaffinity="0"/>
+
     <body name="cube" pos="0.20 0.0 0.023">
       <freejoint name="cube_free"/>
       <geom name="cube_geom" type="box" size="0.021 0.021 0.021" material="red_mat"
@@ -161,16 +209,13 @@
     </body>
 
     <body name="plate" pos="0.15 -0.14 0.008">
-      <geom name="plate_geom" type="cylinder" size="0.058 0.005" material="accent"
-            contype="1" conaffinity="1"/>
-      <geom name="plate_inner" type="cylinder" size="0.044 0.0015" pos="0 0 0.005"
-            material="metal_light" contype="0" conaffinity="0"/>
-      <geom name="plate_dot" type="cylinder" size="0.014 0.0018" pos="0 0 0.0055"
-            material="accent" contype="0" conaffinity="0"/>
+      <geom name="plate_geom"  type="cylinder" size="0.058 0.005" material="accent" contype="1" conaffinity="1"/>
+      <geom name="plate_inner" type="cylinder" size="0.046 0.0015" pos="0 0 0.005" material="arm_white" contype="0" conaffinity="0"/>
+      <geom name="plate_dot"   type="cylinder" size="0.014 0.0018" pos="0 0 0.0055" material="accent" contype="0" conaffinity="0"/>
     </body>
 
     <camera name="front" pos="0.72 -0.60 0.46" xyaxes="0.68 0.73 0 -0.32 0.29 0.90" fovy="42"/>
-    <camera name="close" pos="0.42 -0.36 0.30" xyaxes="0.66 0.75 0 -0.30 0.26 0.92" fovy="40"/>
+    <camera name="close" pos="0.40 -0.34 0.28" xyaxes="0.68 0.73 0 -0.30 0.26 0.92" fovy="40"/>
   </worldbody>
 
   <actuator>
