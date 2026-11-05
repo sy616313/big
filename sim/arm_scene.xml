@@ -62,22 +62,23 @@
           <geom type="sphere" size="0.028" pos="0 0 0" material="mat_joint" contype="1" conaffinity="1"/>
 
           <body name="fore_arm" pos="0.200 0 0">
-            <joint name="j4_wrist" type="hinge" axis="0 1 0" range="-2.0 2.0" damping="0.4" armature="0.01"/>
+            <joint name="j4_wrist" type="hinge" axis="0 1 0" range="-2.7 2.7" damping="0.4" armature="0.01"/>
             <geom type="capsule" size="0.020" fromto="0 0 0 0.120 0 0" material="mat_arm" contype="1" conaffinity="1"/>
             <geom type="sphere" size="0.024" pos="0 0 0" material="mat_joint" contype="1" conaffinity="1"/>
 
             <body name="wrist" pos="0.120 0 0">
               <joint name="j5_roll" type="hinge" axis="1 0 0" range="-3.05 3.05" damping="0.2" armature="0.005"/>
               <geom type="box" size="0.028 0.030 0.030" pos="0.028 0 0" material="mat_joint" contype="1" conaffinity="1"/>
+              <site name="grip" pos="0.072 0 0" size="0.003" rgba="1 0.2 0.2 0.6"/>
 
               <!-- 两指夹爪：左右各一片，末端留 6cm 开口 -->
-              <body name="finger_l" pos="0.056 0.030 0">
+              <body name="finger_l" pos="0.056 0.022 0">
                 <joint name="grip_l" type="slide" axis="0 1 0" range="0 0.030" damping="0.05"/>
-                <geom type="box" size="0.030 0.006 0.012" pos="0.030 0 0" material="mat_finger" contype="1" conaffinity="1"/>
+                <geom type="box" size="0.016 0.005 0.010" pos="0.016 0 0" material="mat_finger" contype="1" conaffinity="1"/>
               </body>
-              <body name="finger_r" pos="0.056 -0.030 0">
+              <body name="finger_r" pos="0.056 -0.022 0">
                 <joint name="grip_r" type="slide" axis="0 1 0" range="-0.030 0" damping="0.05"/>
-                <geom type="box" size="0.030 0.006 0.012" pos="0.030 0 0" material="mat_finger" contype="1" conaffinity="1"/>
+                <geom type="box" size="0.016 0.005 0.010" pos="0.016 0 0" material="mat_finger" contype="1" conaffinity="1"/>
               </body>
             </body>
           </body>
@@ -86,14 +87,14 @@
     </body>
 
     <!-- ===== 待抓取的方块 ===== -->
-    <body name="cube" pos="0.30 0.05 0.018">
+    <body name="cube" pos="0.20 0.0 0.021">
       <freejoint name="cube_free"/>
-      <geom name="cube_geom" type="box" size="0.018 0.018 0.018" material="mat_cube"
-            mass="0.05" contype="1" conaffinity="1" friction="1.2 0.05 0.001"/>
+      <geom name="cube_geom" type="box" size="0.021 0.021 0.021" material="mat_cube"
+            mass="0.04" contype="1" conaffinity="1" friction="1.6 0.05 0.001"/>
     </body>
 
     <!-- ===== 目标盘子 ===== -->
-    <body name="plate" pos="0.22 -0.16 0.006">
+    <body name="plate" pos="0.15 -0.14 0.006">
       <geom name="plate_geom" type="cylinder" size="0.055 0.006" material="mat_plate"
             contype="1" conaffinity="1"/>
     </body>
@@ -101,11 +102,11 @@
 
   <actuator>
     <position name="a1_yaw"      joint="j1_yaw"      kp="45" kv="6" ctrlrange="-3.05 3.05"/>
-    <position name="a2_shoulder" joint="j2_shoulder" kp="70" kv="8" ctrlrange="-1.75 1.35"/>
-    <position name="a3_elbow"    joint="j3_elbow"    kp="55" kv="7" ctrlrange="-2.15 2.15"/>
-    <position name="a4_wrist"    joint="j4_wrist"    kp="25" kv="3" ctrlrange="-2.0 2.0"/>
+    <position name="a2_shoulder" joint="j2_shoulder" kp="120" kv="10" ctrlrange="-1.75 1.35"/>
+    <position name="a3_elbow"    joint="j3_elbow"    kp="90" kv="8" ctrlrange="-2.15 2.15"/>
+    <position name="a4_wrist"    joint="j4_wrist"    kp="45" kv="4" ctrlrange="-2.7 2.7"/>
     <position name="a5_roll"     joint="j5_roll"     kp="12" kv="1.5" ctrlrange="-3.05 3.05"/>
-    <position name="a6_grip_l"   joint="grip_l"      kp="30" kv="2" ctrlrange="0 0.030"/>
-    <position name="a7_grip_r"   joint="grip_r"      kp="30" kv="2" ctrlrange="-0.030 0"/>
+    <position name="a6_grip_l"   joint="grip_l"      kp="150" kv="3" ctrlrange="0 0.030"/>
+    <position name="a7_grip_r"   joint="grip_r"      kp="150" kv="3" ctrlrange="-0.030 0"/>
   </actuator>
 </mujoco>
