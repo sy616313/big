@@ -45,10 +45,8 @@ class Sim:
         self.site = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "grip")
         self.cam = mujoco.MjvCamera()
         mujoco.mjv_defaultCamera(self.cam)
-        self.cam.lookat[:] = [0.17, -0.04, 0.09]
-        self.cam.distance = 0.72
-        self.cam.azimuth = 138.0
-        self.cam.elevation = -20.0
+        self.view = {"az": 138.0, "el": -20.0, "dist": 0.72, "look": [0.17, -0.04, 0.09]}
+        self._apply_view()
 
         self.lock = threading.RLock()
         self.frames = 0
@@ -74,6 +72,43 @@ class Sim:
         buf = io.BytesIO()
         Image.new("RGB", (W, H), (232, 236, 243)).save(buf, format="JPEG")
         return buf.getvalue()
+
+    def _apply_view(self) -> None:
+        v = self.view
+        self.cam.azimuth = v["az"]
+        self.cam.elevation = v["el"]
+        self.cam.distance = v["dist"]
+        self.cam.lookat[:] = v["look"]
+
+    def camera(self, d: dict) -> dict:
+        """处理来自页面的视角增量。
+
+        daz / del：旋转（度）；ddist：缩放（倍率增量）；dx / dy：平移（像素）
+        """
+        with self.lock:
+            v = self.view
+            v["az"] = (v["az"] + float(d.get("daz", 0.0))) % 360.0
+            v["el"] = max(-88.0, min(88.0, v["el"] + float(d.get("del", 0.0))))
+            v["dist"] = max(0.18, min(3.0, v["dist"] * (1.0 + float(d.get("ddist", 0.0)))))
+
+            dx = float(d.get("dx", 0.0))
+            dy = float(d.get("dy", 0.0))
+            if dx or dy:
+                azr = np.radians(v["az"])
+                elr = np.radians(v["el"])
+                fwd = np.array([np.cos(elr) * np.cos(azr), np.cos(elr) * np.sin(azr), np.sin(elr)])
+                right = np.array([-np.sin(azr), np.cos(azr), 0.0])
+                up = np.cross(right, fwd)
+                k = v["dist"] * 0.0016
+                v["look"] = list(np.array(v["look"]) - right * dx * k + up * dy * k)
+            self._apply_view()
+            return dict(v)
+
+    def reset_view(self) -> dict:
+        with self.lock:
+            self.view = {"az": 138.0, "el": -20.0, "dist": 0.72, "look": [0.17, -0.04, 0.09]}
+            self._apply_view()
+            return dict(self.view)
 
     def tip(self) -> np.ndarray:
         return self.data.site_xpos[self.site].copy()
@@ -166,6 +201,8 @@ class Sim:
             for _ in range(per_frame):
                 mujoco.mj_step(self.model, self.data)
 
+            with self.lock:
+                self._apply_view()
             renderer.update_scene(self.data, camera=self.cam)
             buf = io.BytesIO()
             Image.fromarray(renderer.render()).save(buf, format="JPEG", quality=82)
@@ -222,6 +259,8 @@ PAGE = """<!doctype html>
          background:#161b22; border:1px solid #21262d; border-radius:8px; padding:10px 12px;
          white-space:pre-wrap; font-family:Consolas,monospace; }
   .hint { margin-top:10px; font-size:12px; color:#6e7681; }
+  .stage { cursor: grab; }
+  .stage.dragging { cursor: grabbing; }
   button.alt { background:#21262d; border:1px solid #30363d; font-weight:500; }
   .build { margin-top:10px; font-size:12px; color:#6e7681; font-family:Consolas,monospace; }
 </style></head>
@@ -231,7 +270,7 @@ PAGE = """<!doctype html>
   <div class="stage">
     <div class="badge" id="badge">LIVE</div>
     <div class="state" id="state">等待指令</div>
-    <img src="/stream" alt="sim">
+    <img id="sim" src="/stream" alt="sim">
   </div>
   <form id="f">
     <input id="q" autocomplete="off"
@@ -239,9 +278,10 @@ PAGE = """<!doctype html>
     <button id="b">执行</button>
     <button type="button" id="demo" class="alt">一键演示</button>
     <button type="button" id="reset" class="alt">重置</button>
+    <button type="button" id="viewreset" class="alt">复位视角</button>
   </form>
   <div class="log" id="log">等待指令……</div>
-  <div class="hint">这里只能下「机器人指令」，不是终端。不确定就点「一键演示」。</div>
+  <div class="hint">拖动旋转 · 滚轮缩放 · 右键平移 · 双击复位视角｜下面只能下机器人指令，不是终端</div>
   <div class="build" id="build">正在连接服务……</div>
 </div>
 <script>
@@ -277,6 +317,62 @@ async function run(text) {
   catch (e) { logEl.textContent = '请求失败：' + e; }
   btnRun.disabled = false;
 }
+
+// ---------- 自由视角 ----------
+const stage = document.querySelector('.stage');
+const viewReset = $id('viewreset');
+let drag = null;
+let pending = { daz: 0, del: 0, ddist: 0, dx: 0, dy: 0 };
+let flushTimer = null;
+
+function flushCamera() {
+  flushTimer = null;
+  const p = pending;
+  pending = { daz: 0, del: 0, ddist: 0, dx: 0, dy: 0 };
+  fetch('/api/camera', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  }).catch(() => {});
+}
+
+function queueCamera(patch) {
+  for (const k in patch) pending[k] += patch[k];
+  if (!flushTimer) flushTimer = setTimeout(flushCamera, 45);
+}
+
+stage.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  drag = { x: e.clientX, y: e.clientY, btn: e.button, shift: e.shiftKey };
+  stage.classList.add('dragging');
+});
+
+window.addEventListener('mouseup', () => {
+  drag = null;
+  stage.classList.remove('dragging');
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x;
+  const dy = e.clientY - drag.y;
+  drag.x = e.clientX;
+  drag.y = e.clientY;
+  if (drag.btn === 0 && !drag.shift) queueCamera({ daz: dx * 0.35, del: -dy * 0.35 });
+  else queueCamera({ dx, dy });
+});
+
+stage.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  queueCamera({ ddist: e.deltaY * 0.0012 });
+}, { passive: false });
+
+stage.addEventListener('contextmenu', (e) => e.preventDefault());
+stage.addEventListener('dblclick', () => viewReset.click());
+
+viewReset.addEventListener('click', async () => {
+  await fetch('/api/view_reset', { method: 'POST' });
+});
 
 form.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -359,6 +455,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
+        if path == "/api/camera":
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                payload = {}
+            self._send(json.dumps(self.sim.camera(payload), ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+            return
+        if path == "/api/view_reset":
+            self._send(json.dumps(self.sim.reset_view(), ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+            return
         if path == "/api/reset":
             self.sim.reset()
             self._send(b'{"ok":true}', "application/json")
