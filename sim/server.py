@@ -49,6 +49,8 @@ class Sim:
         self.cam.azimuth = 132.0
         self.cam.elevation = -20.0
 
+        self.frames = 0
+        self.started_at = time.time()
         self.lock = threading.RLock()
         self._jpeg = self._blank()
         self._running = True
@@ -147,6 +149,7 @@ class Sim:
             Image.fromarray(img).save(buf, format="JPEG", quality=82)
             with self.lock:
                 self._jpeg = buf.getvalue()
+                self.frames += 1
 
             sleep = (1.0 / FPS) - (time.time() - frame_start)
             if sleep > 0:
@@ -163,6 +166,8 @@ class Sim:
                 "plan": self.plan,
                 "phase": self._phase,
                 "cube": [round(float(v), 3) for v in self.data.body("cube").xpos],
+                "frames": self.frames,
+                "uptime": round(time.time() - self.started_at, 1),
             }
 
 
@@ -195,7 +200,7 @@ PAGE = """<!doctype html>
 <body><div class="wrap">
   <h1>轻量具身智能体 · 本地 Demo</h1>
   <div class="sub">仿真中：六轴机械臂 / 红方块 / 蓝盘子 · 跑在 127.0.0.1</div>
-  <div class="stage"><div class="badge">LIVE</div><img src="/stream" alt="sim"></div>
+  <div class="stage"><div class="badge" id="badge">LIVE</div><img src="/stream" alt="sim"></div>
   <form id="f">
     <input id="q" autocomplete="off"
            placeholder="说一句话，比如：把红色方块放到盘子上">
@@ -205,6 +210,14 @@ PAGE = """<!doctype html>
   <div class="hint">提示：没配 API key 时会走规则解析，同样能听懂「红色方块」「盘子」这类说法。</div>
 </div>
 <script>
+const badge=document.getElementById('badge');
+setInterval(async ()=>{
+  try{
+    const s=await (await fetch('/api/status')).json();
+    badge.textContent = 'LIVE · ' + s.frames + ' 帧 · ' + Math.round(s.uptime) + 's';
+  }catch(e){ badge.textContent='LIVE · 连接断开'; }
+}, 1000);
+
 const f=document.getElementById('f'), q=document.getElementById('q'),
       b=document.getElementById('b'), log=document.getElementById('log');
 f.addEventListener('submit', async (e)=>{
