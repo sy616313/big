@@ -242,10 +242,15 @@
   </worldbody>
 
   <actuator>
-    <position name="a1_yaw"      joint="j1_yaw"      kp="45"  kv="6"   ctrlrange="-3.05 3.05"/>
-    <position name="a2_shoulder" joint="j2_shoulder" kp="120" kv="10"  ctrlrange="-1.75 1.35"/>
-    <position name="a3_elbow"    joint="j3_elbow"    kp="90"  kv="8"   ctrlrange="-2.15 2.15"/>
-    <position name="a4_wrist"    joint="j4_wrist"    kp="45"  kv="4"   ctrlrange="-2.7 2.7"/>
+    <!-- 刚度说明：原来的 kp=45/120/90/45 太软，末端会因为自重下垂 4.5~10.9 mm，
+         抓取点比目标低一厘米，爪子会插进桌面。下垂量基本是负载/kp，实测
+         10.86 -> 5.86 -> 3.90 -> 2.93 -> 1.95 -> 1.46 mm 随 kp 翻倍递减。
+         这里统一提到 8 倍（最大残留误差 1.46 mm），kv 按 sqrt(8) 同步放大以保持阻尼比，
+         静置抖动 < 6 um，没有出现不稳定。 -->
+    <position name="a1_yaw"      joint="j1_yaw"      kp="360" kv="17"  ctrlrange="-3.05 3.05"/>
+    <position name="a2_shoulder" joint="j2_shoulder" kp="960" kv="28"  ctrlrange="-1.75 1.35"/>
+    <position name="a3_elbow"    joint="j3_elbow"    kp="720" kv="23"  ctrlrange="-2.15 2.15"/>
+    <position name="a4_wrist"    joint="j4_wrist"    kp="360" kv="11"  ctrlrange="-2.7 2.7"/>
     <position name="a5_roll"     joint="j5_roll"     kp="12"  kv="1.5" ctrlrange="-3.05 3.05"/>
     <position name="a6_grip_l"   joint="grip_l"      kp="150" kv="3"   ctrlrange="0 0.018"/>
     <position name="a7_grip_r"   joint="grip_r"      kp="150" kv="3"   ctrlrange="-0.018 0"/>

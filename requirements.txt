@@ -1,14 +1,32 @@
-# 已安装在 D:\Anaconda3\envs\embodied （Python 3.12）
+# 本项目在 D:\envs\embodied（Python 3.12.16）上验证通过。
+# 完整安装步骤和验收方法见 docs/环境安装.md，这里只列版本，方便比对。
 #
-# 重要：本机是 RTX 5070 Laptop（Blackwell, 计算能力 sm_120），
-# 必须用 cu128 的 PyTorch 轮子，否则一跑就报
-#   "no kernel image is available for execution on the device"
+# 重要：RTX 50 系（Blackwell, sm_120）必须用 cu128 的 PyTorch 轮子，
+# 装 cu121 会报 "no kernel image is available for execution on the device"。
 #
-# torch 装法：
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   pip install torch==2.11.0 torchvision==0.26.0 ^
+#       --index-url https://download.pytorch.org/whl/cu128
 #
---extra-index-url https://mirrors.aliyun.com/pypi/simple
-torch>=2.7
-torchvision>=0.22
-mujoco>=3.2
-lerobot>=0.3
+# 其余用普通镜像装即可：
+#   pip install -r requirements.txt --extra-index-url https://mirrors.aliyun.com/pypi/simple
+
+torch==2.11.0
+torchvision==0.26.0
+mujoco==3.17.0
+lerobot==0.6.1
+
+# ---- lerobot 的数据集依赖：有硬性上界，别装最新版 ----
+datasets>=4.8,<5
+pandas>=2.2,<3
+pyarrow>=21,<30
+av>=15,<16
+
+# ---- 训练 ----
+accelerate>=1.0
+wandb>=0.24,<0.28
+
+# ---- 说明 ----
+# 1) 不要装 torchcodec：它是 lerobot[dataset] 的声明依赖，但和 torch 2.11 组合时
+#    libtorchcodec_core4.dll 加载失败。LeRobot 会自动回落到 pyav，不需要它。
+# 2) scipy 已经不需要了：逆解改成了闭式解（见 sim/kinematics.py）。
+# 3) imageio 也不再需要：存图统一用 Pillow。

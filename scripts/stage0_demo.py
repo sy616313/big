@@ -98,6 +98,8 @@ def main() -> int:
     steps = int(args.duration / model.opt.timestep)
     save_at = set(np.linspace(0, steps - 1, args.frames).astype(int).tolist())
     saved = []
+    from PIL import Image
+
     for step in range(steps):
         data.ctrl[:] = scripted_ctrl(data.time)
         mujoco.mj_step(model, data)
@@ -105,21 +107,17 @@ def main() -> int:
             renderer.update_scene(data, camera=cam)
             img = renderer.render()
             p = OUTDIR / f"frame_{len(saved):02d}.png"
-            import imageio.v2 as imageio
-
-            imageio.imwrite(p, img)
+            Image.fromarray(img).save(p)
             saved.append(p)
 
     # 拼一张 2x2 的对比图，方便一眼看全
-    import imageio.v2 as imageio
-
-    imgs = [imageio.imread(p) for p in saved[:4]]
+    imgs = [np.asarray(Image.open(p)) for p in saved[:4]]
     if len(imgs) == 4:
         top = np.hstack(imgs[0:2])
         bot = np.hstack(imgs[2:4])
         sheet = np.vstack([top, bot])
         sheet_path = OUTDIR / "contact_sheet.png"
-        imageio.imwrite(sheet_path, sheet)
+        Image.fromarray(sheet).save(sheet_path)
         print(f"拼图已保存：{sheet_path}")
 
     print(f"共保存 {len(saved)} 帧到：{OUTDIR}")

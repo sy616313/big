@@ -1,8 +1,9 @@
 {
   "scene": {
-    "red_cube":  { "color": "red",  "shape": "cube",  "xy": [0.30, 0.10] },
-    "blue_cube": { "color": "blue", "shape": "cube",  "xy": [0.28, -0.12] },
-    "plate":     { "color": null,   "shape": "plate", "xy": [0.05, -0.05] }
+    "red_cube":  { "color": "red",  "shape": "cube",  "xy": [0.20, 0.0] },
+    "blue_cube": { "color": "blue", "shape": "cube",  "xy": [0.20, 0.0],
+                   "note": "同义说法。仿真里目前只有一个方块，服务端会把两个名字都映射到 cube" },
+    "plate":     { "color": null,   "shape": "plate", "xy": [0.15, -0.14] }
   },
   "llm": {
     "providers": [

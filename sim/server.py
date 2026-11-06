@@ -29,13 +29,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SCENE = ROOT / "sim" / "arm_scene.xml"
 
-from sim.kinematics import ik  # noqa: E402
+from sim.env import HOME_XYZ  # noqa: E402
+from sim.kinematics import Unreachable, ik  # noqa: E402
 from src.llm import parse as parse_instruction  # noqa: E402
 
 W, H = 800, 600
 FPS = 24
 GRIP_OPEN = (0.018, -0.018)
-GRIP_CLOSED = (0.000, 0.000)
+# 和 sim/env.py、scripts/grasp_demo.py 保持一致：闭合到 0 会硬挤方块
+GRIP_CLOSED = (0.004, -0.004)
+
+HOME_Q = ik(*HOME_XYZ)
+HOME_CTRL = np.array([*HOME_Q, 0.0, *GRIP_OPEN])
 
 
 class Sim:
@@ -62,7 +67,7 @@ class Sim:
         self._cmd_p = self.tip().copy()      # 当前下发给 IK 的位置（限速用）
         self._wp_t0 = time.time()            # 到达当前关键点的时刻
 
-        self.ctrl_target = np.array([0.0, -0.90, 1.20, -0.50, 0.0, *GRIP_OPEN])
+        self.ctrl_target = HOME_CTRL.copy()
         for _ in range(400):
             self.data.ctrl[:] = self.ctrl_target
             mujoco.mj_step(self.model, self.data)
@@ -158,7 +163,7 @@ class Sim:
             self.wp_index = 0
             self.plan = None
             self.message = "等待指令"
-            self.ctrl_target = np.array([0.0, -0.90, 1.20, -0.50, 0.0, *GRIP_OPEN])
+            self.ctrl_target = HOME_CTRL.copy()
             self.data.ctrl[:] = self.ctrl_target
             for _ in range(500):
                 self.data.ctrl[:] = self.ctrl_target
@@ -196,7 +201,15 @@ class Sim:
                     speed = 0.08                      # m/s，慢到能看清
                     if dist > 1e-9:
                         self._cmd_p += delta * min(1.0, speed * dt / dist)
-                    q = ik(self._cmd_p[0], self._cmd_p[1], self._cmd_p[2])
+                    try:
+                        q = ik(self._cmd_p[0], self._cmd_p[1], self._cmd_p[2])
+                    except Unreachable as e:
+                        # 这里绝对不能让它冒出去：异常会杀死后台循环线程，
+                        # 网页画面就永久冻住了。停下来报个信，比静默死掉好。
+                        self.waypoints = []
+                        self.wp_index = 0
+                        self.message = f"目标够不着：{e}"
+                        continue
                     self.ctrl_target = np.array([*q, 0.0, wp["grip"][0], wp["grip"][1]])
                     self.data.ctrl[:] = self.ctrl_target
 
