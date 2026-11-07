@@ -4,6 +4,9 @@ r"""遥操作采集：人手动把方块抓起来放到盘子上，过程录成�
     双击项目根目录的「遥操作.cmd」，或者：
     & "D:\envs\embodied\python.exe" scripts\teleop.py
 
+    停掉再重开**会接着已录的往下追加**，不会丢也不会拦你。
+    想清空重来（比如换了物理参数、要从头录）：加 --force
+
 键盘（按住不放会连续动，因为窗口会收到系统按键重复）：
     W / S       前 / 后（+x / -x）      方向键也可以
     A / D       左 / 右（+y / -y）
@@ -469,37 +472,43 @@ def _selftest(env: PickPlaceEnv, ds) -> int:
     return 1
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    ap.add_argument("--force", action="store_true", help="已有数据时强制覆盖")
-    ap.add_argument("--max-steps", type=int, default=MAX_STEPS_DEFAULT,
-                    help=f"每条轨迹最多多少步（20 Hz 下 1200 步 = 60 秒），0 = 不限")
-    ap.add_argument("--selftest", action="store_true", help="不开窗口，用程序模拟一遍流程")
-    args = ap.parse_args()
+def count_episodes(out: Path) -> int:
+    """已经录了多少条。读不出来就当 0。"""
+    info = out / "meta" / "info.json"
+    if not info.exists():
+        return 0
+    try:
+        return int(json.loads(info.read_text(encoding="utf-8")).get("total_episodes") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
 
+
+def open_dataset(out: Path, force: bool = False):
+    """按需要「新建 / 续写 / 清空重建」数据集。
+
+    默认行为是**接着已录的往下追加**。以前写成"发现目录存在就拒绝启动"，
+    结果每次想重开都得手动删目录——那是设计错误，不是保护。
+    """
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    out: Path = args.out
-    if out.exists():
-        # 只有「真的录了东西」才拦。空目录（上次试手感、还没存过一帧）直接清掉重建。
+    rounds = count_episodes(out)
+    repo_id = f"local/{out.name}"
+
+    if force and out.exists():
+        print(f"清空重来：删掉已有的 {rounds} 条（{out}）")
+        shutil.rmtree(out)
         rounds = 0
-        info = out / "meta" / "info.json"
-        if info.exists():
-            try:
-                rounds = int(json.loads(info.read_text(encoding="utf-8")).get("total_episodes") or 0)
-            except Exception:  # noqa: BLE001
-                rounds = 0
-        if rounds > 0 and not args.force:
-            print(f"目录里已经有 {rounds} 条轨迹：{out}")
-            print("换一个 --out，或者加 --force 覆盖（会删掉现有数据）。")
-            return 1
-        print(f"{'覆盖' if rounds else '清理'}：{out}")
+
+    if rounds > 0:
+        print(f"接着已有的 {rounds} 条继续录（想清空重来加 --force）")
+        return LeRobotDataset.resume(repo_id=repo_id, root=out, video_backend="pyav")
+
+    if out.exists():
+        print(f"清理上次留下的空目录 {out}")
         shutil.rmtree(out)
 
-    env = PickPlaceEnv(render=True)
     ds = LeRobotDataset.create(
-        repo_id=f"local/{out.name}",
+        repo_id=repo_id,
         fps=FPS,
         features=dataset_features(),
         root=out,
@@ -508,6 +517,25 @@ def main() -> int:
         video_backend="pyav",
     )
     print(f"数据写到 {out}")
+    return ds
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    ap.add_argument("--force", action="store_true",
+                    help="清空已有数据重新开始（默认是接着已录的往下追加）")
+    ap.add_argument("--max-steps", type=int, default=MAX_STEPS_DEFAULT,
+                    help="每条轨迹最多多少步（20 Hz 下 1200 步 = 60 秒），0 = 不限")
+    ap.add_argument("--selftest", action="store_true", help="不开窗口，用程序模拟一遍流程")
+    args = ap.parse_args()
+
+    out: Path = args.out
+    if args.selftest and out.exists():
+        shutil.rmtree(out)          # 自检总是从干净目录开始
+
+    env = PickPlaceEnv(render=True)
+    ds = open_dataset(out, force=args.force)
 
     if args.selftest:
         return _selftest(env, ds)
