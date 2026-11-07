@@ -34,7 +34,6 @@ ensure_utf8()
 from sim.env import (  # noqa: E402
     FPS,
     MAX_EPISODE_STEPS,
-    PLATE_XY,
     PickPlaceEnv,
 )
 
@@ -128,6 +127,7 @@ def main() -> int:
         else:
             obs = env.reset(seed=seed)
         src = env.cube_xyz()[:2].copy()
+        plate = env.plate_xyz()[:2].copy()   # 盘子每局位置不同，先记下来
         policy.reset()
 
         keep = []
@@ -160,7 +160,7 @@ def main() -> int:
         ok += good
         lengths.append(env.steps)
         c = env.cube_xyz()
-        d = float(np.hypot(c[0] - PLATE_XY[0], c[1] - PLATE_XY[1]))
+        d = float(np.hypot(c[0] - plate[0], c[1] - plate[1]))
         if not finite:
             why = "输出 NaN"
         elif peak < 0.050:
@@ -170,7 +170,7 @@ def main() -> int:
         else:
             why = ""
         print(f"ep{ep:3d} seed={seed}  {'成功' if good else '失败'}  "
-              f"步数={env.steps:3d}  方块起点 r={np.hypot(*src):.3f}  "
+              f"步数={env.steps:3d}  方块 r={np.hypot(*src):.3f}  盘子 r={np.hypot(*plate):.3f}  "
               f"最高抬到 z={peak:.3f}  终点离盘心 {d*1000:5.1f} mm" +
               (f"  <- {why}" if why else ""))
 

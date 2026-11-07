@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>遥操作 · 键位说明</title>
+<style>
+  :root{
+    --bg:#11151a; --panel:#1b1f24; --line:#2b3138;
+    --text:#e6edf3; --dim:#8b949e;
+    --key:#2b3138; --key-edge:#3d454e;
+    --move:#2f6feb; --grip:#d29922; --save:#3fb950; --drop:#f85149; --view:#8957e5;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:40px 24px 64px;
+    background:var(--bg); color:var(--text);
+    font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.5px}
+  .sub{color:var(--dim);font-size:14px;margin-bottom:34px;line-height:1.7}
+
+  h2{font-size:15px;font-weight:600;color:var(--dim);
+     margin:34px 0 16px;letter-spacing:2px}
+
+  /* ---- 键帽 ---- */
+  kbd{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:52px;height:52px;padding:0 12px;
+    background:linear-gradient(#39414b,#2b3138);
+    border:1px solid var(--key-edge);border-bottom-width:4px;
+    border-radius:10px;
+    font-family:Consolas,"Courier New",monospace;
+    font-size:19px;font-weight:600;color:#fff;
+    box-shadow:0 2px 0 rgba(0,0,0,.4);
+  }
+  kbd.wide{min-width:auto;padding:0 22px;font-size:15px}
+  kbd small{font-family:inherit;font-size:11px;color:var(--dim);
+            font-weight:400;margin-left:6px}
+
+  .move kbd{background:linear-gradient(#3f7ff5,#2f6feb);border-color:#5a93ff;border-bottom-color:#1d4fb5}
+  .grip kbd{background:linear-gradient(#e0aa33,#b8860b);border-color:#f0c14b;border-bottom-color:#8a6508}
+  .save kbd{background:linear-gradient(#4ac96a,#2ea043);border-color:#5fd97c;border-bottom-color:#1f7a30}
+  .drop kbd{background:linear-gradient(#ff6b62,#da3633);border-color:#ff8880;border-bottom-color:#a32320}
+  .view kbd{background:linear-gradient(#9a6cf0,#7c4ddb);border-color:#b48bff;border-bottom-color:#5c34a8}
+
+  /* ---- 移动区 ---- */
+  .pads{display:flex;gap:44px;flex-wrap:wrap;align-items:flex-start}
+  .pad{display:grid;grid-template-columns:repeat(3,64px);
+       grid-template-rows:repeat(2,64px);gap:8px;justify-items:center;align-items:center}
+  .pad .ghost{visibility:hidden}
+  .pad-label{color:var(--dim);font-size:13px;margin-top:10px;text-align:center}
+
+  /* ---- 其余按键 ---- */
+  .rows{display:flex;flex-direction:column;gap:10px}
+  .row{display:flex;align-items:center;gap:16px;
+       background:var(--panel);border:1px solid var(--line);
+       border-radius:12px;padding:12px 18px}
+  .row .desc{font-size:15px}
+  .row .desc em{display:block;color:var(--dim);font-size:12.5px;
+                font-style:normal;margin-top:3px;line-height:1.5}
+  .row .keys{display:flex;gap:8px;min-width:190px}
+
+  /* ---- 提示 ---- */
+  .tips{display:flex;flex-direction:column;gap:12px}
+  .tip{display:flex;gap:14px;background:var(--panel);border:1px solid var(--line);
+       border-left:4px solid var(--move);border-radius:10px;padding:14px 18px}
+  .tip.warn{border-left-color:var(--grip)}
+  .tip.good{border-left-color:var(--save)}
+  .tip b{display:block;font-size:14.5px;margin-bottom:4px}
+  .tip span{color:var(--dim);font-size:13.5px;line-height:1.65}
+  .num{flex:0 0 26px;height:26px;border-radius:50%;background:var(--key);
+       color:var(--text);font-size:13px;display:flex;
+       align-items:center;justify-content:center;font-weight:600}
+
+  footer{margin-top:46px;color:#5c6670;font-size:12.5px;line-height:1.8;
+         border-top:1px solid var(--line);padding-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>遥操作 · 键位说明</h1>
+  <div class="sub">
+    你只控制夹爪中心往哪走，机械臂的关节角由程序自动算。<br>
+    屏幕上方那行绿字变绿 = 键盘接通了，可以直接开始。
+  </div>
+
+  <h2>移动</h2>
+  <div class="pads">
+    <div>
+      <div class="pad move">
+        <span class="ghost"></span>
+        <kbd>W</kbd>
+        <span class="ghost"></span>
+        <kbd>A</kbd>
+        <kbd>S</kbd>
+        <kbd>D</kbd>
+      </div>
+      <div class="pad-label">W 前 &nbsp; S 后 &nbsp; A 左 &nbsp; D 右</div>
+    </div>
+
+    <div>
+      <div class="pad move">
+        <span class="ghost"></span>
+        <kbd>Q</kbd>
+        <span class="ghost"></span>
+        <span class="ghost"></span>
+        <kbd>E</kbd>
+        <span class="ghost"></span>
+      </div>
+      <div class="pad-label">Q 上 &nbsp; E 下</div>
+    </div>
+  </div>
+
+  <h2>其余按键</h2>
+  <div class="rows">
+
+    <div class="row view">
+      <div class="keys"><kbd class="wide">Tab</kbd></div>
+      <div class="desc">
+        切换精细档
+        <em>粗调 5 mm / 精细 1.5 mm。按一下切一次，不用按住。<br>
+            状态栏会显示当前是哪个档。</em>
+      </div>
+    </div>
+
+    <div class="row grip">
+      <div class="keys"><kbd class="wide">空格</kbd></div>
+      <div class="desc">
+        开 / 合夹爪
+        <em>按一下切换一次。</em>
+      </div>
+    </div>
+
+    <div class="row save">
+      <div class="keys"><kbd class="wide">回车</kbd></div>
+      <div class="desc">
+        结束这一局并保存
+        <em>只有方块真的落到盘子上才会保存，否则会提示丢弃。</em>
+      </div>
+    </div>
+
+    <div class="row drop">
+      <div class="keys"><kbd class="wide">退格</kbd></div>
+      <div class="desc">
+        放弃这一局
+        <em>做砸了直接放弃，按完自动开新的一局。</em>
+      </div>
+    </div>
+
+    <div class="row view">
+      <div class="keys"><kbd class="wide">F11</kbd></div>
+      <div class="desc">
+        全屏 / 退出全屏
+        <em>窗口也可以直接用鼠标拖大。</em>
+      </div>
+    </div>
+
+    <div class="row drop">
+      <div class="keys"><kbd class="wide">Esc</kbd></div>
+      <div class="desc">
+        退出程序
+        <em>已经保存的轨迹不会丢。</em>
+      </div>
+    </div>
+
+  </div>
+
+  <h2>开始前</h2>
+  <div class="tips">
+
+    <div class="tip warn">
+      <div class="num">1</div>
+      <div>
+        <b>先点一下操作窗口</b>
+        <span>窗口左上角要是绿字「键盘已连接到这个窗口」。<br>
+              如果是橙字，说明键盘没连上，按什么都不会动——用鼠标点一下窗口就好。</span>
+      </div>
+    </div>
+
+    <div class="tip good">
+      <div class="num">2</div>
+      <div>
+        <b>不用追求快，也不用追求最短步数</b>
+        <span>慢一点、稳一点，比"一气呵成"有用得多。犹豫、来回微调都没关系。<br>
+              一条轨迹最多 60 秒，到点会自动结算。</span>
+      </div>
+    </div>
+
+    <div class="tip">
+      <div class="num">3</div>
+      <div>
+        <b>只有成功才会被保存</b>
+        <span>没抓起来、抓掉了、没放到位，按回车也不会存，只会提示丢弃。<br>
+              这样存下来的每一条都是能用的示范。</span>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    对着哪一面：画面是从前右上方看的，W 是往「离你更远」的方向，S 是往「离你更近」。<br>
+    如果方向感觉反了，告诉我，改一行就行。
+  </footer>
+
+</div>
+</body>
+</html>

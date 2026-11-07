@@ -69,7 +69,13 @@ PLACE_Z = 0.042                 # 松爪高度
 
 HOME_XYZ = (0.150, 0.0, 0.125)  # 待机位。手腕距肩 0.311 m，余量充足
 PICK_CLEAR_Z = 0.055            # 悬停高度 / 抬起高度
-MAX_EPISODE_STEPS = 160         # 8 秒还抓不到就算失败
+# 一局最多多少步（20 Hz）。这个值同时被采集和评估使用。
+# 原来定 160（8 秒）是按专家轨迹算的——专家 78 步就做完。但它有两个问题：
+#   1) 评估时如果你训的模型动作偏慢（比如用人类示范训的），8 秒可能不够它做完，
+#      于是"其实能做对"被误判成失败；
+#   2) 留一点余量，避免刚好卡在边界的轨迹被截断。
+# 现在放到 400 步（20 秒）：专家照样 78 步结束，不受影响；慢一点的策略有充分时间。
+MAX_EPISODE_STEPS = 400
 
 TASK = "把红色方块放到盘子上"
 
@@ -84,8 +90,10 @@ SAMPLE_Y = (-0.100, 0.105)
 # 上限由「盘子上方 0.085 m 处必须可达」倒推：r=0.24 时手腕距肩 0.338 m，还有余量。
 PLATE_R = (0.165, 0.240)
 PLATE_TH = (-1.00, 0.60)
+# 整只盘子都要待在工作垫上：垫子是 (0.185, -0.045) ± (0.215, 0.170)，盘半径 0.058
+PLATE_PAD_X = (0.030, 0.340)
+PLATE_PAD_Y = (-0.155, 0.065)
 MIN_CUBE_PLATE_DIST = 0.115     # 方块和盘子至少隔这么远，否则方块本来就落在盘上
-_COLLECTED_KEYS = ("p", "grip", "hold", "note")
 
 
 def expert_waypoints(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> list[dict]:
@@ -112,6 +120,23 @@ def trail_reachable(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> bool:
     return True
 
 
+def dataset_features() -> dict:
+    """LeRobot 数据集里每帧的字段定义。
+
+    采集（collect.py，专家自动生成）和遥操作（teleop.py，人手开）都写同一种格式，
+    所以这个定义只能有一份——两边各写一份，训练时字段对不上会很难查。
+    """
+    return {
+        "observation.images.front": {
+            "dtype": "video",
+            "shape": (IMG_H, IMG_W, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "observation.state": {"dtype": "float32", "shape": (STATE_DIM,), "names": None},
+        "action": {"dtype": "float32", "shape": (STATE_DIM,), "names": None},
+    }
+
+
 class PickPlaceEnv:
     """单臂抓放环境。整个进程建议只建一个实例（OpenGL 上下文不好反复创建）。"""
 
@@ -129,6 +154,10 @@ class PickPlaceEnv:
         self.grip_site = mujoco.mj_name2id(self.model, o.mjOBJ_SITE, "grip")
         self.cube_body = mujoco.mj_name2id(self.model, o.mjOBJ_BODY, "cube")
         self.plate_body = mujoco.mj_name2id(self.model, o.mjOBJ_BODY, "plate")
+        self.plate_mid = int(self.model.body_mocapid[self.plate_body])
+        if self.plate_mid < 0:
+            raise RuntimeError(
+                '盘子不是 mocap 体，没法随机摆放。检查 arm_scene.xml 里是不是写了 mocap="true"')
 
         cube_jnt = mujoco.mj_name2id(self.model, o.mjOBJ_JOINT, "cube_free")
         self.cube_qadr = int(self.model.jnt_qposadr[cube_jnt])
@@ -185,9 +214,34 @@ class PickPlaceEnv:
         return np.array([*self.home_q, GRIP_OPEN], dtype=np.float64)
 
     # ---------- 重置 ----------
-    def sample_cube_xy(self, rng: np.random.Generator) -> tuple[float, float]:
-        """在垫子上随机挑一个点，且整条轨迹都够得着。"""
+    def _set_plate(self, x: float, y: float) -> None:
+        """盘子是 mocap 体：直接改位置，forward 一下就生效。"""
+        self.data.mocap_pos[self.plate_mid] = [x, y, PLATE_Z]
+        mujoco.mj_forward(self.model, self.data)
+
+    def sample_plate_xy(self, rng: np.random.Generator,
+                        cube_xy: tuple[float, float] | None = None) -> tuple[float, float] | None:
+        """盘子的随机位置：留在工作垫上、离底座够远、离方块够远、整条轨迹可达。"""
         for _ in range(2000):
+            r = rng.uniform(*PLATE_R)
+            th = rng.uniform(*PLATE_TH)
+            x, y = r * np.cos(th), r * np.sin(th)
+            if not (PLATE_PAD_X[0] <= x <= PLATE_PAD_X[1]):
+                continue
+            if not (PLATE_PAD_Y[0] <= y <= PLATE_PAD_Y[1]):
+                continue
+            if cube_xy is not None:
+                if np.hypot(x - cube_xy[0], y - cube_xy[1]) < MIN_CUBE_PLATE_DIST:
+                    continue
+                if not trail_reachable((cube_xy[0], cube_xy[1], CUBE_REST_Z), (x, y)):
+                    continue
+            return float(x), float(y)
+        return None
+
+    def sample_cube_xy(self, rng: np.random.Generator,
+                       plate_xy: tuple[float, float]) -> tuple[float, float] | None:
+        """方块的随机位置，且整条专家轨迹（含搬运到这只盘子）都够得着。"""
+        for _ in range(3000):
             r = rng.uniform(*SAMPLE_R)
             th = rng.uniform(*SAMPLE_TH)
             x, y = r * np.cos(th), r * np.sin(th)
@@ -195,27 +249,51 @@ class PickPlaceEnv:
                 continue
             if not (SAMPLE_Y[0] <= y <= SAMPLE_Y[1]):
                 continue
-            if np.hypot(x - PLATE_XY[0], y - PLATE_XY[1]) < 0.085:
+            if np.hypot(x - plate_xy[0], y - plate_xy[1]) < MIN_CUBE_PLATE_DIST:
                 continue
-            if not trail_reachable((x, y, CUBE_REST_Z)):
+            if not trail_reachable((x, y, CUBE_REST_Z), plate_xy):
                 continue
             return float(x), float(y)
-        raise RuntimeError("采样失败：可达范围可能变了，检查 SAMPLE_R 与 arm_scene.xml")
+        return None
+
+    def sample_scene(self, rng: np.random.Generator) -> tuple[tuple[float, float], tuple[float, float]]:
+        """成对采样：先挑盘子，再挑一个能搬到这只盘子上的方块。"""
+        for _ in range(300):
+            plate = self.sample_plate_xy(rng)
+            if plate is None:
+                continue
+            cube = self.sample_cube_xy(rng, plate)
+            if cube is None:
+                continue
+            return cube, plate
+        raise RuntimeError("采样失败：可达范围可能变了，检查 SAMPLE_* / PLATE_* 与 arm_scene.xml")
 
     def _place_cube(self, x: float, y: float) -> None:
         self.data.qpos[self.cube_qadr:self.cube_qadr + 7] = [x, y, CUBE_REST_Z + 0.003, 1, 0, 0, 0]
         self.data.qvel[self.cube_vadr:self.cube_vadr + 6] = 0.0
         self._hold(self.home_action, 100)
 
-    def reset(self, seed: int | None = None, cube_xy: tuple[float, float] | None = None) -> dict:
+    def reset(self, seed: int | None = None, cube_xy: tuple[float, float] | None = None,
+              plate_xy: tuple[float, float] | None = None) -> dict:
         if seed is not None:
             self.rng = np.random.default_rng(seed)
         mujoco.mj_resetData(self.model, self.data)
         self.steps = 0
         self._hold(self.home_action, self.settle_steps)   # 先把臂摆到待机位
-        if cube_xy is None:
-            cube_xy = self.sample_cube_xy(self.rng)
-        self._place_cube(*cube_xy)                        # 再把方块放上去
+
+        if plate_xy is None and cube_xy is None:
+            cube_xy, plate_xy = self.sample_scene(self.rng)
+        elif plate_xy is None:
+            plate_xy = self.sample_plate_xy(self.rng, cube_xy)
+            if plate_xy is None:
+                raise RuntimeError(f"给定方块位置 {cube_xy} 后找不到可用的盘子位置")
+        elif cube_xy is None:
+            cube_xy = self.sample_cube_xy(self.rng, plate_xy)
+            if cube_xy is None:
+                raise RuntimeError(f"给定盘子位置 {plate_xy} 后找不到可用的方块位置")
+
+        self._set_plate(*plate_xy)                        # 摆盘子
+        self._place_cube(*cube_xy)                        # 再放方块
         return self.obs()
 
     # ---------- 交互 ----------
@@ -239,9 +317,13 @@ class PickPlaceEnv:
 
     # ---------- 判定 ----------
     def success(self, tol_xy: float = 0.045) -> bool:
-        """方块落到盘子里、并且夹爪已经松开才算成功。"""
+        """方块落到盘子里、并且夹爪已经松开才算成功。
+
+        盘子位置每局都会变，所以这里必须读实际位置，不能用常量。
+        """
         c = self.cube_xyz()
-        if np.hypot(c[0] - PLATE_XY[0], c[1] - PLATE_XY[1]) > tol_xy:
+        p = self.plate_xyz()
+        if np.hypot(c[0] - p[0], c[1] - p[1]) > tol_xy:
             return False
         if not (0.020 <= c[2] <= 0.045):     # 盘面 z≈0.013，方块中心≈0.034
             return False
@@ -271,7 +353,8 @@ class ScriptedExpert:
         self.q = np.zeros(4)
 
     def reset(self) -> None:
-        self.plan = expert_waypoints(self.env.cube_xyz())
+        # 盘子的真实位置每局不同，必须从环境里读，不能用常量
+        self.plan = expert_waypoints(self.env.cube_xyz(), self.env.plate_xyz()[:2])
         self.i = 0
         self.hold = 0
         self.p = self.env.tip().copy()
@@ -321,6 +404,7 @@ def _selftest(n: int = 8, render: bool = False) -> int:
     for ep in range(n):
         obs = env.reset(seed=ep)
         c0 = obs["cube_xyz"].copy()
+        p0 = env.plate_xyz()[:2].copy()
         expert.reset()
         while not expert.done and env.steps < MAX_EPISODE_STEPS:
             obs = env.step(expert.act())
@@ -328,11 +412,10 @@ def _selftest(n: int = 8, render: bool = False) -> int:
         ok += good
         lengths.append(env.steps)
         c1 = env.cube_xyz()
-        err = np.hypot(c1[0] - PLATE_XY[0], c1[1] - PLATE_XY[1])
-        src = np.hypot(c0[0], c0[1])
+        err = np.hypot(c1[0] - p0[0], c1[1] - p0[1])
         print(f"ep{ep}: {'成功' if good else '失败'}  步数={env.steps:3d}  "
-              f"方块起点 r={src:.3f}  ->  离盘心 {err * 1000:5.1f} mm  "
-              f"z={c1[2]:.3f}  爪={env.state()[4]:.4f}")
+              f"方块起点 r={np.hypot(*c0[:2]):.3f}  盘子 r={np.hypot(*p0):.3f}  "
+              f"->  离盘心 {err * 1000:5.1f} mm  z={c1[2]:.3f}  爪={env.state()[4]:.4f}")
 
     print()
     print(f"成功率 {ok}/{n}   平均步数 {np.mean(lengths):.1f} "

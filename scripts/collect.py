@@ -42,36 +42,14 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 
 from sim.env import (  # noqa: E402
     FPS,
-    IMG_H,
-    IMG_W,
     MAX_EPISODE_STEPS,
-    STATE_DIM,
     TASK,
     PickPlaceEnv,
     ScriptedExpert,
+    dataset_features,
 )
 
 DEFAULT_OUT = ROOT / "data" / "grasp_v1"
-
-
-def build_features() -> dict:
-    return {
-        "observation.images.front": {
-            "dtype": "video",
-            "shape": (IMG_H, IMG_W, 3),
-            "names": ["height", "width", "channels"],
-        },
-        "observation.state": {
-            "dtype": "float32",
-            "shape": (STATE_DIM,),
-            "names": None,
-        },
-        "action": {
-            "dtype": "float32",
-            "shape": (STATE_DIM,),
-            "names": None,
-        },
-    }
 
 
 def main() -> int:
@@ -97,7 +75,7 @@ def main() -> int:
     ds = LeRobotDataset.create(
         repo_id=f"local/{out.name}",
         fps=FPS,
-        features=build_features(),
+        features=dataset_features(),
         root=out,
         robot_type="sim_arm_5dof",
         use_videos=True,
