@@ -233,8 +233,10 @@ class PickPlaceEnv:
             if cube_xy is not None:
                 if np.hypot(x - cube_xy[0], y - cube_xy[1]) < MIN_CUBE_PLATE_DIST:
                     continue
-                if not trail_reachable((cube_xy[0], cube_xy[1], CUBE_REST_Z), (x, y)):
-                    continue
+                # 这里**不**校验专家轨迹是否可达。
+                # 这个分支只在外部分指定方块位置时走到（比如评估用的分布外测试），
+                # 那种位置本来就是专家够不着的；拿专家的可达性去卡它，
+                # 会导致"找不到可用盘子"直接报错，测不了。
             return float(x), float(y)
         return None
 

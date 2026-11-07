@@ -11,9 +11,13 @@ r"""遥操作采集：人手动把方块抓起来放到盘子上，过程录成�
     Tab         切换精细档（粗 5 mm / 细 1.5 mm），状态栏会显示
     空格        开 / 合夹爪
     回车        结束本局：**成功了才存**，没成功会提示并丢弃
-    退格        放弃本局
-    F11         全屏 / 退出全屏（窗口也可以直接用鼠标拖大）
+    退格        放弃本局（做砸了就用这个，绝不会写进数据集）
+    R           视角回正
+    F11         全屏 / 退出全屏
     Esc         退出
+
+    鼠标：左键拖动 = 绕场景转视角，滚轮 = 拉近/推远。
+          抓手被挡住或者想从侧面确认对位时很有用。
 
     每条轨迹默认最多 60 秒（1200 步），到点会自动结算；嫌短可以加
     --max-steps 0 完全不限。
@@ -190,6 +194,13 @@ class TeleopWindow:
         self.canvas = tk.Canvas(self.root, bg="#1b1f24", highlightthickness=0, bd=0)
         self.canvas.pack(padx=8, pady=(6, 4), fill="both", expand=True)
         self._img_id: int | None = None
+        self._drag: tuple[int, int] | None = None
+
+        # 鼠标控制视角：左键拖动 = 绕场景转，滚轮 = 拉近/推远，R 键回正
+        self.canvas.bind("<ButtonPress-1>", self._cam_drag_start)
+        self.canvas.bind("<B1-Motion>", self._cam_drag)
+        self.canvas.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
+        self.canvas.bind("<MouseWheel>", self._cam_wheel)
 
         # 锁死高度：这两行文字每帧都在变（数字在动），不锁的话 Tk 每帧都要
         # 重新排版整个窗口，白白吃掉十几毫秒。宽度不能锁——锁了文字会被裁掉。
@@ -262,6 +273,9 @@ class TeleopWindow:
         if key == "F11":
             self._fullscreen = not self._fullscreen
             self.root.attributes("-fullscreen", self._fullscreen)
+            return "break"
+        if key.lower() == "r":
+            self._cam_reset()
             return "break"
 
         axis = axis_of(key)
@@ -338,6 +352,32 @@ class TeleopWindow:
 
         rest = 1.0 / FPS - (time.perf_counter() - t0)
         self.root.after(max(1, int(rest * 1000)), self.tick)
+
+    # ---------- 鼠标看视角 ----------
+    def _cam_drag_start(self, event) -> None:
+        self._drag = (event.x, event.y)
+        self.root.focus_set()          # 拖完还能直接按键
+
+    def _cam_drag(self, event) -> None:
+        if self._drag is None:
+            self._drag = (event.x, event.y)
+            return
+        dx = event.x - self._drag[0]
+        dy = event.y - self._drag[1]
+        self._drag = (event.x, event.y)
+        self.cam.azimuth = (self.cam.azimuth - dx * 0.4) % 360.0
+        self.cam.elevation = max(-89.0, min(89.0, self.cam.elevation + dy * 0.4))
+
+    def _cam_wheel(self, event) -> None:
+        # Windows 上 event.delta 是 ±120 的倍数
+        step = 0.9 if event.delta > 0 else 1.1
+        self.cam.distance = max(0.22, min(1.60, self.cam.distance * step))
+
+    def _cam_reset(self) -> None:
+        self.cam.azimuth = VIEW["azimuth"]
+        self.cam.elevation = VIEW["elevation"]
+        self.cam.distance = VIEW["distance"]
+        self.cam.lookat[:] = VIEW["lookat"]
 
     def _fps(self) -> float:
         """最近若干帧的实际刷新率。低于 18 就说明窗口太大、要缩一点。"""

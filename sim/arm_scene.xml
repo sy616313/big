@@ -255,7 +255,12 @@
     <position name="a3_elbow"    joint="j3_elbow"    kp="720" kv="23"  ctrlrange="-2.15 2.15"/>
     <position name="a4_wrist"    joint="j4_wrist"    kp="360" kv="11"  ctrlrange="-2.7 2.7"/>
     <position name="a5_roll"     joint="j5_roll"     kp="12"  kv="1.5" ctrlrange="-3.05 3.05"/>
-    <position name="a6_grip_l"   joint="grip_l"      kp="150" kv="3"   ctrlrange="0 0.018"/>
-    <position name="a7_grip_r"   joint="grip_r"      kp="150" kv="3"   ctrlrange="-0.018 0"/>
+    <!-- 夹爪刚度也是一样的道理，而且更要命：kp=150 时两根手指合计只有约
+         0.3 N 正压力，而方块重 0.4 N。原来靠摩擦勉强吊住，实测搬运时
+         在爪内滑 40 mm，动作大一点就有 1/3 的概率直接甩掉。
+         提到 400 之后：滑移 40.5 -> 6.9 mm，晃动测试 3/3 全都没掉。
+         夹持位仍然用 0.004（缝隙 44 mm），所以不会把方块夹坏。 -->
+    <position name="a6_grip_l"   joint="grip_l"      kp="400" kv="5"   ctrlrange="0 0.018"/>
+    <position name="a7_grip_r"   joint="grip_r"      kp="400" kv="5"   ctrlrange="-0.018 0"/>
   </actuator>
 </mujoco>
