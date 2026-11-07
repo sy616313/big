@@ -230,7 +230,10 @@
             mass="0.04" contype="1" conaffinity="1" friction="1.6 0.05 0.001"/>
     </body>
 
-    <body name="plate" pos="0.15 -0.14 0.008">
+    <!-- 盘子做成 mocap（运动学体）：位置由程序在 reset 时设定，每局可以换地方，
+         但它依然参与碰撞，方块能正常落在盘面上（实测高度误差 0.1 mm）。
+         为什么不用自由关节：那样盘子会被机械臂撞飞，而我们需要它稳稳待在指定位置。 -->
+    <body name="plate" pos="0.15 -0.14 0.008" mocap="true">
       <geom name="plate_shadow" type="cylinder" size="0.068 0.0010" pos="0 0 -0.0062" material="contact_shadow" contype="0" conaffinity="0"/>
       <geom name="plate_geom"  type="cylinder" size="0.058 0.005" material="accent" contype="1" conaffinity="1"/>
       <geom name="plate_inner" type="cylinder" size="0.046 0.0015" pos="0 0 0.005" material="arm_white" contype="0" conaffinity="0"/>

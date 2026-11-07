@@ -63,7 +63,8 @@ GRIP_CLOSED = 0.004
 
 CUBE_HALF = 0.021
 CUBE_REST_Z = 0.0232            # 方块静止时中心高度（工作垫 0.0022 + 半宽 0.021）
-PLATE_XY = (0.150, -0.140)
+PLATE_XY = (0.150, -0.140)      # 盘子的默认位置（也是 XML 里的初始位置）
+PLATE_Z = 0.008                 # 盘子底面高度
 PLACE_Z = 0.042                 # 松爪高度
 
 HOME_XYZ = (0.150, 0.0, 0.125)  # 待机位。手腕距肩 0.311 m，余量充足
@@ -77,7 +78,14 @@ TASK = "把红色方块放到盘子上"
 SAMPLE_R = (0.170, 0.245)
 SAMPLE_TH = (-0.75, 0.75)       # 约 ±43°，都在正前方
 SAMPLE_X = (0.02, 0.385)
-SAMPLE_Y = (-0.085, 0.105)      # 上界避开盘子（盘子 y=-0.14）
+SAMPLE_Y = (-0.100, 0.105)
+
+# 盘子采样范围。下限避开机械臂底座（底座半径约 0.09 + 盘半径 0.058），
+# 上限由「盘子上方 0.085 m 处必须可达」倒推：r=0.24 时手腕距肩 0.338 m，还有余量。
+PLATE_R = (0.165, 0.240)
+PLATE_TH = (-1.00, 0.60)
+MIN_CUBE_PLATE_DIST = 0.115     # 方块和盘子至少隔这么远，否则方块本来就落在盘上
+_COLLECTED_KEYS = ("p", "grip", "hold", "note")
 
 
 def expert_waypoints(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> list[dict]:
@@ -95,10 +103,10 @@ def expert_waypoints(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> list
     ]
 
 
-def trail_reachable(cube_xyz) -> bool:
+def trail_reachable(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> bool:
     """整条专家轨迹逐点求逆解，任何一点够不着或换分支都算不可用。"""
     try:
-        ik_chain([w["p"] for w in expert_waypoints(cube_xyz)])
+        ik_chain([w["p"] for w in expert_waypoints(cube_xyz, plate_xy)])
     except Unreachable:
         return False
     return True
