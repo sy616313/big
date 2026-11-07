@@ -99,6 +99,10 @@ def build_argv(a: argparse.Namespace) -> list[str]:
         argv.append("--policy.use_amp=true")
     if a.resume:
         argv.append("--resume=true")
+    if a.augment:
+        # 图像增强：随机色彩抖动 + 轻微平移。示范少的时候（比如 20 条人类示范）
+        # 有用，能压一点过拟合；示范充足（300 条）时反而可能拖慢收敛。
+        argv.append("--dataset.image_transforms.enable=true")
     return argv
 
 
@@ -114,6 +118,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--amp", action="store_true", help="混合精度，显存吃紧时开")
+    ap.add_argument("--augment", action="store_true",
+                    help="开图像增强（色彩抖动 + 平移），示范条数少时压过拟合")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--smoke", action="store_true", help="只跑 30 步，检查链路通不通")
     args = ap.parse_args()

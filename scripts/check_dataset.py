@@ -75,11 +75,26 @@ def main() -> int:
     if not ok_lim:
         problems.append("关节角超出限位，state 可能存错了")
 
-    # 夹爪是软限位，闭合时会略微越界，给 1 mm 余量
-    ok_grip = np.all(states[:, 4] >= -1e-3) and np.all(states[:, 4] <= 0.018 + 1e-3)
-    print(f"夹爪开合在合理区间            {'OK' if ok_grip else 'FAIL'}")
-    if not ok_grip:
-        problems.append("夹爪值越界")
+    # 夹爪的量程是 0~0.018，但它是**软约束**：
+    #   - 正常情况静止/摆动都精确停在 0.018（实测过）
+    #   - 超过 0.018 只有一个原因：闭合的夹爪被硬怼进方块，被方块顶开
+    # 所以这里不是"越界就报错"，而是按超出量分三档说话。
+    g = states[:, 4]
+    over = float(g.max() - 0.018)
+    frac = float(np.mean(g > 0.018) * 100)
+    if g.min() < -2e-3:
+        print(f"夹爪出现负值（{g.min():.4f}）        FAIL")
+        problems.append("夹爪值出现负数，数据写坏了")
+    elif over <= 1e-3:
+        print(f"夹爪开合在量程内              OK（最大 {g.max():.4f}）")
+    elif over <= 8e-3:
+        # 这是操作痕迹，不是数据损坏：说明有 {frac:.0f}% 的帧把夹爪怼进了方块
+        print(f"夹爪被顶出量程 {over*1000:.1f} mm（{frac:.0f}% 的帧）  WARN")
+        print("    这不算数据损坏，但说明有一部分帧在拿闭合的爪子往下压方块。")
+        print("    如果后续训练效果不好，先怀疑这些帧，重录时注意：先对好位置再合爪。")
+    else:
+        print(f"夹爪被顶出量程 {over*1000:.1f} mm（{frac:.0f}% 的帧）  FAIL")
+        problems.append("夹爪被顶出量程太多，动作可能严重穿模")
 
     spread = float(states[:, 4].max() - states[:, 4].min())
     ok_spread = spread > 0.005

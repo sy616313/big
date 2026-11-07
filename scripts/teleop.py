@@ -141,13 +141,23 @@ class Recorder:
         if not good:
             self.frames.clear()
             return False, 0
+        # 去掉"连续重复动作"的帧。
+        # 遥操作只在按键时才改目标，两次按键之间动作完全一样。实测人类示范里
+        # 有 83% 的帧是重复的，模型于是学成"什么都别做"（真发生过，闭环 0/20）。
+        # 这里只保留动作真正变化的那一帧，把"保持不动"压掉。
+        kept: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+        prev: np.ndarray | None = None
         for img, st, act in self.frames:
+            if prev is None or not np.allclose(act, prev, atol=1e-6):
+                kept.append((img, st, act))
+                prev = act
+        for img, st, act in kept:
             self.ds.add_frame({"observation.images.front": img,
                                "observation.state": st,
                                "action": act,
                                "task": TASK})
         self.ds.save_episode()
-        n = len(self.frames)
+        n = len(kept)
         self.frames.clear()
         return True, n
 
