@@ -38,8 +38,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=ROOT / "data" / "human_v1")
     ap.add_argument("--dst", type=Path, default=ROOT / "data" / "human_v1c")
+    ap.add_argument("--hold", type=int, default=1,
+                    help="同一动作最多连续保留几帧。1=压缩掉全部停顿（默认）；"
+                         "3=保留短停顿，夹爪夹紧那几帧不会被压没")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
+    if args.hold < 1:
+        print("--hold 至少是 1")
+        return 1
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -69,13 +75,18 @@ def main() -> int:
     for e in np.unique(eps):
         idx = np.where(eps == e)[0]
         prev_act = None
+        dup = 0
         kept = 0
         for i in idx:
             item = old[int(i)]
             act = item["action"].numpy()
             raw_total += 1
             if prev_act is not None and np.allclose(act, prev_act, atol=1e-6):
-                continue
+                dup += 1
+                if dup >= args.hold:
+                    continue
+            else:
+                dup = 0
             # 数据集读出来是 (3,H,W) 的 float [0,1]；写回去要 (H,W,3) 的 uint8
             img = (item["observation.images.front"].permute(1, 2, 0).numpy() * 255.0
                    ).round().clip(0, 255).astype(np.uint8)
@@ -95,7 +106,7 @@ def main() -> int:
     new.finalize()
     print(f"目标：{dst}  {len(kept_lens)} 条 / {kept_total} 帧")
     print(f"压缩比：{kept_total}/{raw_total} = {kept_total/raw_total*100:.1f}%（去掉了 "
-          f"{(1-kept_total/raw_total)*100:.1f}% 的空转帧）")
+          f"{(1-kept_total/raw_total)*100:.1f}% 的空转帧，同一动作最多留 {args.hold} 帧）")
     if kept_lens:
         print(f"压缩后每条约 {np.mean(kept_lens):.0f} 帧"
               f"（{np.mean(kept_lens)/old.meta.fps:.1f} 秒），"

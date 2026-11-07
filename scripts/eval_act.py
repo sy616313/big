@@ -117,6 +117,7 @@ def main() -> int:
     t0 = time.time()
     ok = 0
     lengths: list[int] = []
+    reasons: dict[str, int] = {}
     for ep in range(args.n_episodes):
         seed = EVAL_SEED_BASE + ep
         if args.ood:
@@ -161,14 +162,26 @@ def main() -> int:
         lengths.append(env.steps)
         c = env.cube_xyz()
         d = float(np.hypot(c[0] - plate[0], c[1] - plate[1]))
-        if not finite:
+        grip = float(env.state()[4])
+        # 失败原因按「卡在哪一步」分，这样才知道该改哪一段：
+        #   没夹起来      → 抓取阶段就没成
+        #   没松手        → 搬到了但夹爪不放，方块还在爪子里
+        #   高度不对      → 松手了但方块没落在盘面高度（掉桌上 / 举太高）
+        #   放偏了        → 位置对不上盘子中心
+        if good:
+            why = ""          # 成功了就不要贴失败原因，否则「成功」后面跟着「没夹起来」很误导
+        elif not finite:
             why = "输出 NaN"
         elif peak < 0.050:
             why = "没夹起来"
-        elif not good:
-            why = "夹起来了但没放准"
+        elif grip <= 0.008:
+            why = "没松手"
+        elif not (0.020 <= c[2] <= 0.045):
+            why = f"高度不对 z={c[2]*1000:.0f}mm"
         else:
-            why = ""
+            why = "放偏了"
+        if why:
+            reasons[why] = reasons.get(why, 0) + 1
         print(f"ep{ep:3d} seed={seed}  {'成功' if good else '失败'}  "
               f"步数={env.steps:3d}  方块 r={np.hypot(*src):.3f}  盘子 r={np.hypot(*plate):.3f}  "
               f"最高抬到 z={peak:.3f}  终点离盘心 {d*1000:5.1f} mm" +
@@ -182,6 +195,9 @@ def main() -> int:
     print(f"成功率 {ok}/{args.n_episodes} = {rate * 100:.0f}%   "
           f"平均 {np.mean(lengths):.1f} 步（{np.mean(lengths)/FPS:.1f}s）   "
           f"用时 {time.time()-t0:.1f}s")
+    if reasons:
+        print("失败原因：" + "，".join(f"{k} {v}" for k, v in
+                                  sorted(reasons.items(), key=lambda kv: -kv[1])))
     env.close()
     if rate < args.min_success:
         print(f"低于合格线 {args.min_success * 100:.0f}%，返回 1")
