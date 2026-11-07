@@ -30,7 +30,7 @@ ensure_utf8()
 
 from sim.kinematics import JOINT_HI, JOINT_LO  # noqa: E402
 
-DEFAULT = ROOT / "data" / "grasp_v1"
+DEFAULT = ROOT / "data" / "grasp_v2"
 N_SAMPLE = 400        # 统计关节角用的抽样帧数
 N_IMAGE = 12          # 检查画面用的抽样帧数
 

@@ -30,8 +30,8 @@ from sim.runtime import ensure_utf8  # noqa: E402
 
 ensure_utf8()   # 必须在任何 lerobot 导入之前
 
-DEFAULT_DATASET = ROOT / "data" / "grasp_v1"
-DEFAULT_OUT = ROOT / "runs" / "train" / "act_grasp_v1"
+DEFAULT_DATASET = ROOT / "data" / "grasp_v2"
+DEFAULT_OUT = ROOT / "runs" / "train" / "act_grasp_v3"
 
 
 # ------------------------------------------------------------------ 符号链接补丁

@@ -49,7 +49,8 @@ from sim.env import (  # noqa: E402
     dataset_features,
 )
 
-DEFAULT_OUT = ROOT / "data" / "grasp_v1"
+# 默认写到一个新目录：别不小心覆盖掉已经采好的 grasp_v2
+DEFAULT_OUT = ROOT / "data" / "grasp_v3"
 
 
 def main() -> int:

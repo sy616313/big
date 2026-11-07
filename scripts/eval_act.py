@@ -37,7 +37,7 @@ from sim.env import (  # noqa: E402
     PickPlaceEnv,
 )
 
-DEFAULT_CKPT = ROOT / "runs" / "train" / "act_grasp_v1" / "checkpoints" / "last" / "pretrained_model"
+DEFAULT_CKPT = ROOT / "runs" / "train" / "act_grasp_v2" / "checkpoints" / "last" / "pretrained_model"
 EVAL_SEED_BASE = 10_000
 
 
