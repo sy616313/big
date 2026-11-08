@@ -10,6 +10,34 @@ import os
 import re
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def load_dotenv(path: Path | None = None) -> int:
+    """把项目根目录的 .env 读进 os.environ（缺这个依赖，所以自己写十行）。
+
+    约定：只认 `KEY=VALUE`，`#` 开头跳过，已存在的环境变量不覆盖。
+    返回读进来的条目数。返回值放在仓库里方便自检查「到底加载了没有」。
+    """
+    p = path or (ROOT / ".env")
+    if not p.exists():
+        return 0
+    n = 0
+    for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+            n += 1
+    return n
+
+
+load_dotenv()
 
 
 class ProviderError(RuntimeError):

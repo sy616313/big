@@ -154,6 +154,45 @@ class InstructionParser:
         raise ParseError("所有 provider 都失败了：\n  " + "\n  ".join(errors))
 
 
+    # ---------------- 通用问答：给 agent 用，不校验成 target/place ----------------
+    def ask(self, system: str, user: str, use_cache: bool = True) -> tuple[str, str]:
+        """按同一套 provider 链发一次通用请求，返回 (模型原文, provider 名)。
+
+        和 parse() 的区别：不套场景表校验，返回什么就是什么——agent 要的是
+        计划 JSON，字段比 target/place 复杂得多，让调用方自己校验。
+        缓存单独放一个文件，免得和指令解析的缓存混在一起。
+        """
+        key = hashlib.sha1((system + "\x00" + user).encode("utf-8")).hexdigest()[:16]
+        cache_path = ROOT / "runs" / "agent_cache.jsonl"
+        if use_cache and cache_path.exists():
+            for line in cache_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("key") == key:
+                    return row["out"], "cache"
+
+        errors: list[str] = []
+        retries = int(self.llm_cfg.get("max_retries", 1))
+        for provider in self.providers:
+            for attempt in range(retries + 1):
+                try:
+                    out = provider.complete(system, user)
+                except ProviderError as e:
+                    errors.append(f"[{provider.name} #{attempt + 1}] {e}")
+                    continue
+                if not out.strip():
+                    errors.append(f"[{provider.name} #{attempt + 1}] 返回空")
+                    continue
+                if use_cache:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    with cache_path.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps({"key": key, "out": out}, ensure_ascii=False) + "\n")
+                return out, provider.name
+        raise ParseError("所有 provider 都失败了：\n  " + "\n  ".join(errors))
+
+
 def parse(text: str) -> Plan:
     return InstructionParser().parse(text)
 

@@ -44,6 +44,16 @@ GRIP_CLOSED = (0.004, -0.004)
 HOME_Q = ik(*HOME_XYZ)
 HOME_CTRL = np.array([*HOME_Q, 0.0, *GRIP_OPEN])
 
+# ---- 策略接管（把训练好的 ACT 接到网页上）----
+# 训练时的画面是 320x240 / 名为 front 的相机；这里用同一个相机渲染再降采样，
+# 保证模型看到的画面和训练时一致（分辨率不同不影响视场角）。
+POLICY_IMG = (320, 240)
+POLICY_CAMERA = "front"
+POLICY_EXEC = 10          # 每执行多少步重新预测一次（实测 10 是这批数据的最优点）
+POLICY_MAX_STEPS = 400
+ARM_JOINTS = ["j1_yaw", "j2_shoulder", "j3_elbow", "j4_wrist", "grip_l"]
+
+
 
 class Sim:
     def __init__(self) -> None:
@@ -73,6 +83,19 @@ class Sim:
         for _ in range(400):
             self.data.ctrl[:] = self.ctrl_target
             mujoco.mj_step(self.model, self.data)
+
+        # 策略接管相关（默认关闭，--policy 指向权重目录才启用）
+        self.arm_qadr = [
+            int(self.model.jnt_qposadr[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, n)])
+            for n in ARM_JOINTS
+        ]
+        self.policy = None
+        self.policy_pre = None
+        self.policy_post = None
+        self.policy_device = None
+        self.policy_queue: list[np.ndarray] = []
+        self.policy_consumed = 0
+        self.policy_steps = 0
 
     @staticmethod
     def _blank() -> bytes:
@@ -122,6 +145,68 @@ class Sim:
     def tip(self) -> np.ndarray:
         return self.data.site_xpos[self.site].copy()
 
+    # ---------- 策略接管 ----------
+    def load_policy(self, ckpt: Path) -> None:
+        """加载训练好的策略（act / diffusion 都认）。
+
+        注意：这里不复用 scripts/eval_act.py 的加载函数——那个模块在 import 时会调用
+        ensure_utf8()，在已经跑着的服务里会重启进程，只能自己写一遍。
+        """
+        from lerobot.configs.policies import PreTrainedConfig
+        from lerobot.policies.factory import make_pre_post_processors
+
+        cfg = PreTrainedConfig.from_pretrained(str(ckpt))
+        if cfg.type == "act":
+            from lerobot.policies.act.modeling_act import ACTPolicy as Cls
+        elif cfg.type == "diffusion":
+            from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy as Cls
+        else:
+            raise SystemExit(f"网页还不支持 policy.type={cfg.type}")
+        policy = Cls.from_pretrained(str(ckpt), config=cfg)
+        policy.eval()
+        pre, post = make_pre_post_processors(cfg, pretrained_path=str(ckpt))
+        with self.lock:
+            self.policy, self.policy_pre, self.policy_post = policy, pre, post
+            self.policy_device = next(policy.parameters()).device
+            self.policy_queue = []
+            self.policy_steps = 0
+            self.message = f"策略已加载：{Path(ckpt).parent.parent.parent.name}"
+
+    def _policy_batch(self, renderer) -> dict:
+        """按训练时的相机和尺寸取一帧，拼成策略要的 batch。"""
+        import torch
+
+        renderer.update_scene(self.data, camera=POLICY_CAMERA)
+        frame = renderer.render()                       # 800x600，视场角与训练一致
+        small = np.asarray(Image.fromarray(frame).resize(POLICY_IMG, Image.BILINEAR))
+        img = torch.from_numpy(small).float().div_(255.0).permute(2, 0, 1).unsqueeze(0)
+        img = img.to(self.policy_device)
+        state = torch.tensor([[float(self.data.qpos[a]) for a in self.arm_qadr]],
+                             dtype=torch.float32, device=self.policy_device)
+        return {"observation.images.front": img, "observation.state": state}
+
+    def _query_policy(self, renderer) -> None:
+        """取一整块动作放进队列。select_action 内部有队列，连调 N 次只算一次前向。"""
+        import torch
+
+        batch = self.policy_pre(self._policy_batch(renderer))
+        n = int(getattr(self.policy.config, "n_action_steps", 40))
+        with torch.no_grad():
+            self.policy.reset()
+            acts = [self.policy_post(self.policy.select_action(batch)).squeeze(0)
+                    .float().cpu().numpy() for _ in range(n)]
+        self.policy_queue = [np.asarray(a, dtype=np.float64) for a in acts]
+        self.policy_consumed = 0
+
+    def _policy_done(self) -> bool:
+        """只判"方块在盘子上且夹爪松开了"，和训练/评估的判据一致。"""
+        c = np.array(self.body_xyz("cube"))
+        p = np.array(self.body_xyz("plate"))
+        grip = float(self.data.qpos[self.arm_qadr[4]])
+        return (float(np.hypot(c[0] - p[0], c[1] - p[1])) < 0.045
+                and 0.020 <= c[2] <= 0.045 and grip > 0.008)
+
+
     def body_xyz(self, name: str) -> list[float]:
         return [float(v) for v in self.data.body(name).xpos]
 
@@ -143,6 +228,15 @@ class Sim:
 
             self.plan = plan.to_dict()
             self.message = f"目标 {plan.target} → 放到 {plan.place}"
+            if self.policy is not None:
+                # 策略模式：不用逆解轨迹，清空队列让策略从当前状态重新规划
+                self.waypoints = []
+                self.wp_index = 0
+                self.policy_queue = []
+                self.policy_consumed = 0
+                self.policy_steps = 0
+                self.message = "策略接管：正在看画面执行"
+                return {"ok": True, "plan": plan.to_dict(), "mode": "policy"}
             self.waypoints = [
                 {"p": cube + [0, 0, 0.060],  "grip": GRIP_OPEN,   "note": "1/7 悬停到方块上方"},
                 {"p": cube + [0, 0, 0.002],  "grip": GRIP_OPEN,   "note": "2/7 下降对准方块"},
@@ -166,6 +260,11 @@ class Sim:
             self.plan = None
             self.message = "等待指令"
             self.ctrl_target = HOME_CTRL.copy()
+            self.policy_queue = []
+            self.policy_consumed = 0
+            self.policy_steps = 0
+            if self.policy is not None:
+                self.policy.reset()
             self.data.ctrl[:] = self.ctrl_target
             for _ in range(500):
                 self.data.ctrl[:] = self.ctrl_target
@@ -193,27 +292,50 @@ class Sim:
         while self._running:
             t0 = time.time()
             with self.lock:
-                self._advance()
-                if self.wp_index < len(self.waypoints):
-                    wp = self.waypoints[self.wp_index]
-                    dest = np.asarray(wp["p"], dtype=float)
-                    dt = per_frame * step
-                    delta = dest - self._cmd_p
-                    dist = float(np.linalg.norm(delta))
-                    speed = 0.08                      # m/s，慢到能看清
-                    if dist > 1e-9:
-                        self._cmd_p += delta * min(1.0, speed * dt / dist)
-                    try:
-                        q = ik(self._cmd_p[0], self._cmd_p[1], self._cmd_p[2])
-                    except Unreachable as e:
-                        # 这里绝对不能让它冒出去：异常会杀死后台循环线程，
-                        # 网页画面就永久冻住了。停下来报个信，比静默死掉好。
-                        self.waypoints = []
-                        self.wp_index = 0
-                        self.message = f"目标够不着：{e}"
-                        continue
-                    self.ctrl_target = np.array([*q, 0.0, wp["grip"][0], wp["grip"][1]])
-                    self.data.ctrl[:] = self.ctrl_target
+                policy_mode = self.policy is not None and self.plan is not None
+                if policy_mode:
+                    # 策略接管：每 POLICY_EXEC 步重新预测一次，其余步执行队列里的动作
+                    if not self.policy_queue or self.policy_consumed >= POLICY_EXEC:
+                        self._query_policy(renderer)
+                    act = self.policy_queue.pop(0) if self.policy_queue else HOME_CTRL[0:5]
+                    self.policy_consumed += 1
+                    self.policy_steps += 1
+                    grip = float(np.clip(act[4], 0.0, GRIP_OPEN[0]))
+                    self.data.ctrl[0:4] = act[0:4]
+                    self.data.ctrl[4] = 0.0
+                    self.data.ctrl[5] = grip
+                    self.data.ctrl[6] = -grip
+                    self.ctrl_target = np.array([*act[0:4], 0.0, grip, -grip])
+                    if self._policy_done():
+                        self.message = "完成：策略把方块放到盘子上了"
+                        self.plan = None
+                        self.policy_queue = []
+                    elif self.policy_steps >= POLICY_MAX_STEPS:
+                        self.message = "超时：策略没能在规定步数内完成"
+                        self.plan = None
+                        self.policy_queue = []
+                else:
+                    self._advance()
+                    if self.wp_index < len(self.waypoints):
+                        wp = self.waypoints[self.wp_index]
+                        dest = np.asarray(wp["p"], dtype=float)
+                        dt = per_frame * step
+                        delta = dest - self._cmd_p
+                        dist = float(np.linalg.norm(delta))
+                        speed = 0.08                      # m/s，慢到能看清
+                        if dist > 1e-9:
+                            self._cmd_p += delta * min(1.0, speed * dt / dist)
+                        try:
+                            q = ik(self._cmd_p[0], self._cmd_p[1], self._cmd_p[2])
+                        except Unreachable as e:
+                            # 这里绝对不能让它冒出去：异常会杀死后台循环线程，
+                            # 网页画面就永久冻住了。停下来报个信，比静默死掉好。
+                            self.waypoints = []
+                            self.wp_index = 0
+                            self.message = f"目标够不着：{e}"
+                            continue
+                        self.ctrl_target = np.array([*q, 0.0, wp["grip"][0], wp["grip"][1]])
+                        self.data.ctrl[:] = self.ctrl_target
 
             for _ in range(per_frame):
                 mujoco.mj_step(self.model, self.data)
@@ -519,6 +641,9 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--open", action="store_true",
                     help="启动后自动用默认浏览器打开页面（双击 启动网页.cmd 用）")
+    ap.add_argument("--policy", type=Path, default=None,
+                    help="指向 .../pretrained_model 目录：让网页跑训练好的 ACT，"
+                         "而不是逆解轨迹。不传就用逆解。")
     args = ap.parse_args()
     url = f"http://127.0.0.1:{args.port}"
 
@@ -531,6 +656,12 @@ def main() -> int:
         return 0
 
     sim = Sim()
+    if args.policy is not None:
+        if not (args.policy / "config.json").exists():
+            print(f"找不到策略：{args.policy}")
+            return 1
+        sim.load_policy(args.policy)
+        print(f"策略模式：{args.policy}")
     threading.Thread(target=sim.loop, daemon=True).start()
     Handler.sim = sim
 
