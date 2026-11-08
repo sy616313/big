@@ -88,6 +88,9 @@ def main() -> int:
                          "训练范围是 0.17~0.245，所以这里全是没见过的位置")
     ap.add_argument("--min-success", type=float, default=0.7,
                     help="成功率低于这个值就返回非 0 退出码，方便当验收闸门用")
+    ap.add_argument("--seed-base", type=int, default=EVAL_SEED_BASE,
+                    help="起始种子。传 20000 = 遥操作录制时用的那批场景（训练见过的位置），"
+                         "用来分清「场景没覆盖」还是「示范本身不一致」")
     args = ap.parse_args()
 
     if args.ablate != "none":
@@ -119,7 +122,7 @@ def main() -> int:
     lengths: list[int] = []
     reasons: dict[str, int] = {}
     for ep in range(args.n_episodes):
-        seed = EVAL_SEED_BASE + ep
+        seed = args.seed_base + ep
         if args.ood:
             g = np.random.default_rng(seed)
             r = g.uniform(0.250, 0.285)
