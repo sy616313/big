@@ -17,6 +17,7 @@ r"""评估训练好的 ACT 策略：在仿真里真跑，统计成功率。
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import time
 from pathlib import Path
@@ -62,12 +63,18 @@ def save_montage(frames: list[np.ndarray], path: Path, n: int = 8, cols: int = 4
 
 
 def load_policy(path: Path):
+    """按存档里记的 policy.type 选类，act / diffusion 都能加载。"""
     from lerobot.configs.policies import PreTrainedConfig
-    from lerobot.policies.act.modeling_act import ACTPolicy
     from lerobot.policies.factory import make_pre_post_processors
 
     cfg = PreTrainedConfig.from_pretrained(str(path))
-    policy = ACTPolicy.from_pretrained(str(path), config=cfg)
+    if cfg.type == "act":
+        from lerobot.policies.act.modeling_act import ACTPolicy as Cls
+    elif cfg.type == "diffusion":
+        from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy as Cls
+    else:
+        raise SystemExit(f"评估脚本还不认识 policy.type={cfg.type}")
+    policy = Cls.from_pretrained(str(path), config=cfg)
     policy.eval()
     pre, post = make_pre_post_processors(cfg, pretrained_path=str(path))
     return cfg, policy, pre, post
@@ -91,6 +98,11 @@ def main() -> int:
     ap.add_argument("--seed-base", type=int, default=EVAL_SEED_BASE,
                     help="起始种子。传 20000 = 遥操作录制时用的那批场景（训练见过的位置），"
                          "用来分清「场景没覆盖」还是「示范本身不一致」")
+    ap.add_argument("--ensemble", action="store_true",
+                    help="ACT 论文的时序集成：每一步都重新预测一整块，对同一时刻被多次预测到的动作"
+                         "做指数加权平均再执行。论文报告 +3.3%，只增加推理开销")
+    ap.add_argument("--ensemble-m", type=float, default=0.01,
+                    help="集成衰减系数，越小越信任最新的预测（论文默认 0.01）")
     args = ap.parse_args()
 
     if args.ablate != "none":
@@ -137,6 +149,8 @@ def main() -> int:
         keep = []
         peak = 0.0
         finite = True
+        chunks: list[tuple[int, np.ndarray]] = []      # 时序集成用：(开始步, 整块预测)
+        H = int(getattr(policy.config, "n_action_steps", 100))
         while env.steps < MAX_EPISODE_STEPS:
             batch = {
                 "observation.images.front": to_tensor(obs["image"]).to(device),
@@ -148,8 +162,25 @@ def main() -> int:
                 batch["observation.state"] = torch.zeros_like(batch["observation.state"])
             with torch.no_grad():
                 batch = pre(batch)
-                action = post(policy.select_action(batch))
-            act = action.squeeze(0).float().cpu().numpy()
+                if args.ensemble:
+                    # 每步都重预测一整块（reset 之后第一次调用算一次前向，剩下 H-1 次只是出队）
+                    policy.reset()
+                    chunk = np.stack([post(policy.select_action(batch)).squeeze(0).float().cpu().numpy()
+                                      for _ in range(H)])
+                    chunks.append((env.steps, chunk))
+                    chunks = [(s, c) for s, c in chunks if s + H > env.steps]
+                    num = np.zeros_like(chunk[0])
+                    den = 0.0
+                    for s, c in chunks:
+                        i = env.steps - s
+                        if 0 <= i < len(c):
+                            w = math.exp(-args.ensemble_m * i)
+                            num += w * c[i]
+                            den += w
+                    act = num / max(den, 1e-9)
+                else:
+                    action = post(policy.select_action(batch))
+                    act = action.squeeze(0).float().cpu().numpy()
             if not np.all(np.isfinite(act)):
                 finite = False   # 不拦的话 NaN 会把整个仿真的 qpos 污染掉，后面全是在看垃圾
                 break

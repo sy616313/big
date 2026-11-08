@@ -100,7 +100,7 @@ def build_argv(a: argparse.Namespace) -> list[str]:
         f"--dataset.repo_id=local/{dataset.name}",
         f"--dataset.root={dataset}",
         "--dataset.video_backend=pyav",      # 没装 torchcodec，显式指定免得它反复警告
-        "--policy.type=act",
+        f"--policy.type={a.policy}",
         "--policy.push_to_hub=false",        # 不写成会被要求给 repo_id
         f"--policy.device={a.device}",
         f"--output_dir={out}",
@@ -124,6 +124,15 @@ def build_argv(a: argparse.Namespace) -> list[str]:
         # 图像增强：随机色彩抖动 + 轻微平移。示范少的时候（比如 20 条人类示范）
         # 有用，能压一点过拟合；示范充足（300 条）时反而可能拖慢收敛。
         argv.append("--dataset.image_transforms.enable=true")
+    if a.chunk_size:
+        # 一次预测多少步。默认 100 步 @20 Hz = 5 秒，比 ALOHA 的 100 步 @50 Hz（2 秒）长得多；
+        # 而且我们每条轨迹只有约 100 步，等于一条轨迹一整块，模型从没"走到一半再被问一次"。
+        # 调小之后一条轨迹会被切成多块，闭环重规划才有可能落在训练分布里。
+        argv.append(f"--policy.chunk_size={a.chunk_size}")
+    if a.n_action_steps:
+        argv.append(f"--policy.n_action_steps={a.n_action_steps}")
+    if a.reset_after is not None:
+        argv.append(f"--policy.drop_n_last_frames={a.reset_after}")
     return argv
 
 
@@ -133,6 +142,14 @@ def main() -> int:
     ap.add_argument("--episodes", default=None,
                     help="只用这些 episode 训练，如 0-19 或 0,3,5；默认用全部（对照实验用）")
     ap.add_argument("--output", type=Path, default=DEFAULT_OUT)
+    ap.add_argument("--policy", default="act",
+                    help="策略类型：act（默认）或 diffusion。人类示范多变时看 diffusion 是否更稳")
+    ap.add_argument("--chunk-size", type=int, default=None,
+                    help="一次预测多少步（默认 100）。调小能让一条轨迹切成多块，闭环才有意义")
+    ap.add_argument("--n-action-steps", type=int, default=None,
+                    help="每执行多少步重新预测（默认等于 chunk_size）")
+    ap.add_argument("--reset-after", type=int, default=None,
+                    help="对应 LeRobot 的 drop_n_last_frames，一般不用动")
     ap.add_argument("--steps", type=int, default=30000)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--workers", type=int, default=2, help="数据加载进程数，0 = 主进程里加载")
