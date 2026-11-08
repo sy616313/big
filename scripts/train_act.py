@@ -34,6 +34,24 @@ DEFAULT_DATASET = ROOT / "data" / "grasp_v2"
 DEFAULT_OUT = ROOT / "runs" / "train" / "act_grasp_v3"
 
 
+def parse_episodes(spec: str) -> list[int]:
+    """把 "0-19" 或 "0,3,5" 解析成 episode 下标列表。
+
+    用于「只换数据条数」的对照实验：同一套超参，只把训练集从 300 条抽到 20 条。
+    """
+    out: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            out.extend(range(int(lo), int(hi) + 1))
+        else:
+            out.append(int(part))
+    return sorted(set(out))
+
+
 # ------------------------------------------------------------------ 符号链接补丁
 def _patch_symlink() -> None:
     """把 lerobot 的 update_last_checkpoint 换成 Windows 上不会崩的版本。"""
@@ -95,6 +113,9 @@ def build_argv(a: argparse.Namespace) -> list[str]:
         f"--seed={a.seed}",
         "--wandb.enable=false",              # 本地跑，不联外网
     ]
+    if a.episodes:
+        eps = parse_episodes(a.episodes)
+        argv.append(f"--dataset.episodes=[{','.join(map(str, eps))}]")
     if a.amp:
         argv.append("--policy.use_amp=true")
     if a.resume:
@@ -109,6 +130,8 @@ def build_argv(a: argparse.Namespace) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    ap.add_argument("--episodes", default=None,
+                    help="只用这些 episode 训练，如 0-19 或 0,3,5；默认用全部（对照实验用）")
     ap.add_argument("--output", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--steps", type=int, default=30000)
     ap.add_argument("--batch-size", type=int, default=16)

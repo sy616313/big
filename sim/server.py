@@ -15,9 +15,11 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import socket
 import sys
 import threading
 import time
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -500,18 +502,52 @@ class Handler(BaseHTTPRequestHandler):
                    "application/json; charset=utf-8")
 
 
+def port_in_use(port: int) -> bool:
+    """端口上是否已经有人在服务。
+
+    Windows 的 SO_REUSEADDR 允许两个进程绑同一个端口（Python 的
+    ThreadingHTTPServer 默认开着），光靠 bind 失败判断不出来，会变成两个
+    服务抢连接。所以先连一下，连得上就说明演示已经在跑。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.3)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--open", action="store_true",
+                    help="启动后自动用默认浏览器打开页面（双击 启动网页.cmd 用）")
     args = ap.parse_args()
+    url = f"http://127.0.0.1:{args.port}"
+
+    if port_in_use(args.port):
+        # 最常见的原因：演示已经开着了，又双击了一次启动器
+        print(f"端口 {args.port} 已经有服务在跑，不再重复启动。")
+        print(f"直接打开 {url} 即可。")
+        if args.open:
+            webbrowser.open(url)
+        return 0
 
     sim = Sim()
     threading.Thread(target=sim.loop, daemon=True).start()
     Handler.sim = sim
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"本地 Demo 已启动： http://127.0.0.1:{args.port}")
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    except OSError as exc:
+        # 端口被占最常见的原因：演示已经开着了，再双击了一次启动器
+        print(f"端口 {args.port} 已被占用：{exc}")
+        print(f"如果演示已经在运行，直接打开 {url} 即可。")
+        if args.open:
+            webbrowser.open(url)
+        return 1
+
+    print(f"本地 Demo 已启动： {url}")
     print("按 Ctrl+C 停止")
+    if args.open:
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

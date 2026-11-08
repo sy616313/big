@@ -81,6 +81,7 @@ SEED_BASE = 20_000          # 和训练用的 0~299、评估用的 10000 起都�
 KEY_STEP = 0.005            # 粗档：按一次 5 mm
 STEP_FINE = 0.0015          # 细档：按一次 1.5 mm
 MAX_KEYS_PER_TICK = 4       # 每个控制周期最多处理几次按键（防止重复率太高飞出去）
+TAIL_HOLD = 10              # 按回车结算前，张爪保持多少帧（0.5 秒）再写盘
 
 DISP_W, DISP_H = 1280, 960  # 显示渲染尺寸：只在启动时建一次，之后按窗口大小缩放
 # 注意：不要在运行中重建 Renderer。实测同时存在两个离屏 GL 上下文时，
@@ -151,15 +152,37 @@ class Recorder:
             if prev is None or not np.allclose(act, prev, atol=1e-6):
                 kept.append((img, st, act))
                 prev = act
+        # 但「松手」这一段不能压：按回车时张爪往往只录到一帧，模型学不到
+        # “松开后保持张开”，会把方块一直夹着（实测 20 条里 4 条这样）。
+        # 这里把最后 TAIL_HOLD 帧原样保留；finish() 会先张爪走满这些帧。
+        tail = self.frames[-TAIL_HOLD:] if self.frames else []
+        if len(tail) < TAIL_HOLD or any(abs(a[4] - GRIP_OPEN) > 1e-6 for _, _, a in tail):
+            tail = []          # 结尾不是连续张爪，就别补（自检/异常路径）
         for img, st, act in kept:
             self.ds.add_frame({"observation.images.front": img,
                                "observation.state": st,
                                "action": act,
                                "task": TASK})
+        # tail[0] 就是 kept[-1]（张爪那帧），已经写过，跳过避免重复。
+        for img, st, act in tail[1:]:
+            self.ds.add_frame({"observation.images.front": img,
+                               "observation.state": st,
+                               "action": act,
+                               "task": TASK})
         self.ds.save_episode()
-        n = len(kept)
+        n = len(kept) + max(0, len(tail) - 1)
         self.frames.clear()
         return True, n
+
+
+def hold_gripper_open(env: PickPlaceEnv, rec: Recorder, obs: dict,
+                      prev_q: np.ndarray, n: int = TAIL_HOLD) -> dict:
+    """张爪并保持 n 帧，返回最后一帧 obs。收尾和自检共用。"""
+    action = np.array([*prev_q, GRIP_OPEN], dtype=np.float64)
+    for _ in range(n):
+        rec.add(obs, action)
+        obs = env.step(action)
+    return obs
 
 
 # ------------------------------------------------------------------ 主窗口
@@ -224,7 +247,7 @@ class TeleopWindow:
         self.hint = tk.Label(self.root, bg="#1b1f24", fg="#8b949e",
                              font=("Microsoft YaHei", 10), anchor="w", justify="left",
                              text=("W/S 前后   A/D 左右   Q/E 上下   Tab 精细档   "
-                                   "空格 开合夹爪   回车 存下本局   退格 放弃   F11 全屏   Esc 退出"))
+                                   "空格 开合夹爪   回车 存本局（自动保持松手）   退格 放弃   F11 全屏   Esc 退出"))
         self.hint.pack(fill="x", padx=10, pady=(0, 8))
 
         self.root.bind("<KeyPress>", self.on_key)
@@ -300,6 +323,7 @@ class TeleopWindow:
     # ---------- 结束一局 ----------
     def finish(self, save: bool) -> None:
         if save:
+            self._hold_open_before_save()
             ok, n = self.rec.commit()
             if ok:
                 self.saved += 1
@@ -313,6 +337,18 @@ class TeleopWindow:
             print("[主动放弃本局]")
         self.ep += 1
         self.start_episode()
+
+    def _hold_open_before_save(self) -> None:
+        """按回车结算前，先张爪并保持 TAIL_HOLD 帧。
+
+        遥操作是“按回车那一刻结束录制”，张爪往往只留下 1 帧；ACT 学不到
+        “松开后继续保持张开”，于是把方块搬到盘子上却一直夹着。
+        这里用同一套 env.step 真走 10 帧，让状态里夹爪真的张开。
+        """
+        if not self.rec.frames:
+            return
+        self.grip_open = True
+        self.obs = hold_gripper_open(self.env, self.rec, self.obs, self.prev_q)
 
     # ---------- 主循环 ----------
     def tick(self) -> None:
@@ -469,6 +505,7 @@ def _selftest(env: PickPlaceEnv, ds) -> int:
         rec.add(obs, action)
         obs = env.step(action)
     print(f"  放下   {describe(env, True, False)}")
+    obs = hold_gripper_open(env, rec, obs, prev_q)
 
     ok, n = rec.commit()
     ds.finalize()
@@ -532,7 +569,8 @@ def open_dataset(out: Path, force: bool = False):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    ap.add_argument("--out", type=Path, default=None,
+                    help="数据目录，默认 data/human_v1；--selftest 时默认 data/_selftest")
     ap.add_argument("--force", action="store_true",
                     help="清空已有数据重新开始（默认是接着已录的往下追加）")
     ap.add_argument("--max-steps", type=int, default=MAX_STEPS_DEFAULT,
@@ -540,7 +578,13 @@ def main() -> int:
     ap.add_argument("--selftest", action="store_true", help="不开窗口，用程序模拟一遍流程")
     args = ap.parse_args()
 
-    out: Path = args.out
+    # 自检绝对不能落到正式数据集上：老版本默认写 data/human_v1，一跑
+    # --selftest 就把 20 条人工示范整个删掉重录。现在自检默认写 data/_selftest。
+    out: Path = args.out or ((ROOT / "data" / "_selftest") if args.selftest else DEFAULT_OUT)
+    if args.selftest and out.resolve() == DEFAULT_OUT.resolve():
+        print("拒绝：--selftest 会清空输出目录，不能指向正式数据 data/human_v1。")
+        print("      省略 --out 即使用 data/_selftest。")
+        return 2
     if args.selftest and out.exists():
         shutil.rmtree(out)          # 自检总是从干净目录开始
 
