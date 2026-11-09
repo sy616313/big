@@ -11,7 +11,7 @@ cd /d "%~dp0"
 set "PY=D:\envs\embodied\python.exe"
 if not exist "%PY%" set "PY=python"
 
-set "CKPT=runs\train\act_human_104_c40\checkpoints\020000\pretrained_model"
+set "CKPT=runs\train\act_h104_aug\checkpoints\020000\pretrained_model"
 if not exist "%CKPT%\config.json" set "CKPT=runs\train\act_grasp_v2\checkpoints\040000\pretrained_model"
 if not exist "%CKPT%\config.json" goto no_policy
 

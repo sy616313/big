@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+from collections import deque
 import time
 from pathlib import Path
 
@@ -98,6 +99,9 @@ def main() -> int:
     ap.add_argument("--seed-base", type=int, default=EVAL_SEED_BASE,
                     help="起始种子。传 20000 = 遥操作录制时用的那批场景（训练见过的位置），"
                          "用来分清「场景没覆盖」还是「示范本身不一致」")
+    ap.add_argument("--state-history", type=int, default=1,
+                    help="把最近 N 帧关节角拼起来喂给策略（默认 1 = 只喂当前帧）。"
+                         "必须和 add_state_history.py 训练出来的模型配套")
     ap.add_argument("--ensemble", action="store_true",
                     help="ACT 论文的时序集成：每一步都重新预测一整块，对同一时刻被多次预测到的动作"
                          "做指数加权平均再执行。论文报告 +3.3%，只增加推理开销")
@@ -150,11 +154,17 @@ def main() -> int:
         peak = 0.0
         finite = True
         chunks: list[tuple[int, np.ndarray]] = []      # 时序集成用：(开始步, 整块预测)
+        # 状态历史缓冲：开头用第一帧补齐，和 add_state_history.py 的做法一致
+        hist: deque = deque([np.asarray(obs["state"], dtype=np.float32)] * args.state_history,
+                            maxlen=args.state_history)
         H = int(getattr(policy.config, "n_action_steps", 100))
         while env.steps < MAX_EPISODE_STEPS:
+            # 状态历史：和 scripts/add_state_history.py 用同一种拼法（最早 → 当前）
+            hist.append(np.asarray(obs["state"], dtype=np.float32))
+            state_vec = np.concatenate(list(hist)) if args.state_history > 1 else obs["state"]
             batch = {
                 "observation.images.front": to_tensor(obs["image"]).to(device),
-                "observation.state": torch.from_numpy(obs["state"]).float().unsqueeze(0).to(device),
+                "observation.state": torch.from_numpy(state_vec).float().unsqueeze(0).to(device),
             }
             if args.ablate == "image":
                 batch["observation.images.front"] = torch.zeros_like(batch["observation.images.front"])

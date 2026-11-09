@@ -133,6 +133,8 @@ def build_argv(a: argparse.Namespace) -> list[str]:
         argv.append(f"--policy.n_action_steps={a.n_action_steps}")
     if a.reset_after is not None:
         argv.append(f"--policy.drop_n_last_frames={a.reset_after}")
+    if a.n_obs_steps:
+        argv.append(f"--policy.n_obs_steps={a.n_obs_steps}")
     return argv
 
 
@@ -150,6 +152,9 @@ def main() -> int:
                     help="每执行多少步重新预测（默认等于 chunk_size）")
     ap.add_argument("--reset-after", type=int, default=None,
                     help="对应 LeRobot 的 drop_n_last_frames，一般不用动")
+    ap.add_argument("--n-obs-steps", type=int, default=None,
+                    help="策略看几帧历史（默认 1 = 只看当前帧）。"
+                         "RoboMimic 那篇的结论是「人类数据上历史帧很关键」，值得开 2~3 试")
     ap.add_argument("--steps", type=int, default=30000)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--workers", type=int, default=2, help="数据加载进程数，0 = 主进程里加载")
