@@ -160,31 +160,27 @@ class Sim:
         return self.data.site_xpos[self.site].copy()
 
     # ---------- 策略接管 ----------
-    def load_policy(self, ckpt: Path) -> None:
-        """加载训练好的策略（act / diffusion 都认）。
+    def load_policy(self, ckpts) -> None:
+        """加载训练好的策略：给一个就单模型，给多个就集成（动作取平均）。
 
-        注意：这里不复用 scripts/eval_act.py 的加载函数——那个模块在 import 时会调用
-        ensure_utf8()，在已经跑着的服务里会重启进程，只能自己写一遍。
+        集成逻辑走 sim/ensemble.py —— 和 scripts/eval_ensemble.py 是同一份代码，
+        所以网页里跑出来的就是评估里测过的那个东西，不会出现「网页 76%、报告 84%」。
         """
-        from lerobot.configs.policies import PreTrainedConfig
-        from lerobot.policies.factory import make_pre_post_processors
+        from sim.ensemble import EnsemblePolicy
 
-        cfg = PreTrainedConfig.from_pretrained(str(ckpt))
-        if cfg.type == "act":
-            from lerobot.policies.act.modeling_act import ACTPolicy as Cls
-        elif cfg.type == "diffusion":
-            from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy as Cls
-        else:
-            raise SystemExit(f"网页还不支持 policy.type={cfg.type}")
-        policy = Cls.from_pretrained(str(ckpt), config=cfg)
-        policy.eval()
-        pre, post = make_pre_post_processors(cfg, pretrained_path=str(ckpt))
+        if isinstance(ckpts, (str, Path)):
+            ckpts = [ckpts]
+        ens = EnsemblePolicy.from_paths(ckpts)
         with self.lock:
-            self.policy, self.policy_pre, self.policy_post = policy, pre, post
-            self.policy_device = next(policy.parameters()).device
+            self.policy = ens
+            self.policy_pre = None            # 每个成员自己的归一化在 act() 里做
+            self.policy_post = None
+            self.policy_device = ens.device
             self.policy_queue = []
+            self.policy_consumed = 0
             self.policy_steps = 0
-            self.message = f"策略已加载：{Path(ckpt).parent.parent.parent.name}"
+            tag = " + ".join(ens.names)
+            self.message = f"策略已加载：{tag}" + ("（集成）" if len(ens.members) > 1 else "")
 
     def _policy_batch(self, renderer) -> dict:
         """按训练时的相机和尺寸取一帧，拼成策略要的 batch。"""
@@ -200,16 +196,11 @@ class Sim:
         return {"observation.images.front": img, "observation.state": state}
 
     def _query_policy(self, renderer) -> None:
-        """取一整块动作放进队列。select_action 内部有队列，连调 N 次只算一次前向。"""
-        import torch
-
-        batch = self.policy_pre(self._policy_batch(renderer))
+        """取一整块动作放进队列。连调 N 次只算一次前向（靠策略内部的队列）。"""
+        batch = self._policy_batch(renderer)      # 原始 batch，归一化交给各成员自己
         n = int(getattr(self.policy.config, "n_action_steps", 40))
-        with torch.no_grad():
-            self.policy.reset()
-            acts = [self.policy_post(self.policy.select_action(batch)).squeeze(0)
-                    .float().cpu().numpy() for _ in range(n)]
-        self.policy_queue = [np.asarray(a, dtype=np.float64) for a in acts]
+        self.policy_queue = [np.asarray(a, dtype=np.float64)
+                             for a in self.policy.act(batch, n)]
         self.policy_consumed = 0
 
     def _policy_done(self) -> bool:
@@ -811,9 +802,10 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--open", action="store_true",
                     help="启动后自动用默认浏览器打开页面（双击 启动网页.cmd 用）")
-    ap.add_argument("--policy", type=Path, default=None,
+    ap.add_argument("--policy", type=Path, default=None, nargs="+",
                     help="指向 .../pretrained_model 目录：让网页跑训练好的 ACT，"
-                         "而不是逆解轨迹。不传就用逆解。")
+                         "而不是逆解轨迹。不传就用逆解。"
+                         "给两个以上目录就是集成（每个模型各自预测，动作取平均）。")
     ap.add_argument("--agent", action="store_true",
                     help="智能体模式：网页里每一句话先让大模型拆成工具计划，执行时逐步记录，"
                          "失败会把真实结果回传给大模型重新出方案。需要同时给 --policy。")
@@ -830,11 +822,12 @@ def main() -> int:
 
     sim = Sim()
     if args.policy is not None:
-        if not (args.policy / "config.json").exists():
-            print(f"找不到策略：{args.policy}")
+        missing = [str(p) for p in args.policy if not (p / "config.json").exists()]
+        if missing:
+            print("找不到策略：\n  " + "\n  ".join(missing))
             return 1
         sim.load_policy(args.policy)
-        print(f"策略模式：{args.policy}")
+        print("策略模式：" + " + ".join(str(p) for p in args.policy))
     if args.agent:
         if args.policy is None:
             print("``--agent`` 需要同时给 ``--policy``（智能体靠策略动手）")

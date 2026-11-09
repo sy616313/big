@@ -58,6 +58,10 @@ TOOLS: dict[str, dict] = {
 POLICY_EXEC = 10          # 策略每执行多少步重规划一次（实测最优）
 MAX_POLICY_STEPS = 400
 
+# 真正会改变场景的工具。只有这些出现在计划里，一轮跑通才算"做成了"——
+# 只调 look 也返回 ok，那是"看过了"，不是"做完了"。
+ACTING_TOOLS = frozenset({"move_plate", "grasp_and_place", "expert_grasp_and_place"})
+
 
 def _tool_doc() -> str:
     lines = []
@@ -287,11 +291,15 @@ class Executor:
                     "observation.state": torch.from_numpy(obs["state"]).float()
                         .unsqueeze(0).to(self.device),
                 }
-                b = self.pre(batch)
+                b = self.pre(batch) if self.pre is not None else batch
                 with torch.no_grad():
-                    self.policy.reset()
-                    queue = [self.post(self.policy.select_action(b)).squeeze(0)
-                             .float().cpu().numpy() for _ in range(POLICY_EXEC)]
+                    if self.pre is None and hasattr(self.policy, "act"):
+                        # 集成策略：自己管归一化，传入原始 batch
+                        queue = list(self.policy.act(batch, POLICY_EXEC))
+                    else:
+                        self.policy.reset()
+                        queue = [self.post(self.policy.select_action(b)).squeeze(0)
+                                 .float().cpu().numpy() for _ in range(POLICY_EXEC)]
             act = np.asarray(queue.pop(0), dtype=np.float64)
             self.env.step(act)
             steps += 1
@@ -354,8 +362,19 @@ class Executor:
                     print(f"    - {s.tool} {s.args}")
             result = self.run(plan, verbose=verbose)
             history.append({"turn": turn + 1, "plan": plan.to_dict(), "result": result})
-            if result["ok"]:
+            if result["ok"] and any(s.tool in ACTING_TOOLS for s in plan.steps):
                 return {"ok": True, "turns": turn + 1, "history": history}
+            if result["ok"]:
+                # 计划跑通了，但里面一步实际动作都没有（比如只调了 look）——
+                # 不能算成功。实测真出现过：模型先"看看"，然后就被当成做完了。
+                if turn + 1 >= max_turns:
+                    return {"ok": False, "error": "计划里只有观察，没有实际动手",
+                            "history": history}
+                feedback = ("你的计划只有观察，没有任何实际动作，任务并没有完成。"
+                            "请直接给出能改变场景的计划。")
+                if verbose:
+                    print(f"  ↻ 计划里没有实际动作，回传给大模型：{feedback}")
+                continue
             if plan.on_failure == "stop" and turn == 0:
                 # 用户没要求重试：仍给模型一次改方案的机会，这正是它该发挥作用的地方
                 pass
