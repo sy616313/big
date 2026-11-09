@@ -97,6 +97,20 @@ class Sim:
         self.policy_consumed = 0
         self.policy_steps = 0
 
+        # 智能体模式（--agent）：大模型出计划，执行器逐步跑，失败回传重规划
+        self.agent_state = "idle"          # idle | running | done
+        self.agent_text = ""
+        self.agent_plan: dict | None = None
+        self.agent_trace: list[dict] = []
+        self.agent_result: dict | None = None
+        self.agent_enabled = False
+        self._renderer = None              # 由 loop() 建好后挂上来，策略取画面要用
+        self._per_frame = 1
+
+        self.plate_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "plate")
+        self.plate_mid = int(self.model.body_mocapid[self.plate_body])
+        self._plate_home = np.array(self.data.body("plate").xpos, dtype=float).copy()
+
     @staticmethod
     def _blank() -> bytes:
         buf = io.BytesIO()
@@ -206,12 +220,115 @@ class Sim:
         return (float(np.hypot(c[0] - p[0], c[1] - p[1])) < 0.045
                 and 0.020 <= c[2] <= 0.045 and grip > 0.008)
 
+    # ---------- 给智能体当"环境"用的接口 ----------
+    # src/agent.py 的 Executor 只要求下面这几个方法，名字和 PickPlaceEnv 保持一致，
+    # 这样同一套执行器既能跑命令行（无界面）、也能跑网页。
+    def cube_xyz(self) -> np.ndarray:
+        return np.array(self.body_xyz("cube"), dtype=float)
+
+    def plate_xyz(self) -> np.ndarray:
+        return np.array(self.body_xyz("plate"), dtype=float)
+
+    def state(self) -> np.ndarray:
+        return np.array([float(self.data.qpos[a]) for a in self.arm_qadr], dtype=np.float32)
+
+    def success(self) -> bool:
+        return self._policy_done()
+
+    def _apply_action(self, act: np.ndarray) -> None:
+        grip = float(np.clip(act[4], 0.0, GRIP_OPEN[0]))
+        self.data.ctrl[0:4] = act[0:4]
+        self.data.ctrl[4] = 0.0
+        self.data.ctrl[5] = grip
+        self.data.ctrl[6] = -grip
+        self.ctrl_target = np.array([*act[0:4], 0.0, grip, -grip])
+
+    def step(self, act) -> dict:
+        """智能体线程专用的推进：加锁走一帧物理，睡一小会儿让网页看得清。"""
+        with self.lock:
+            self._apply_action(np.asarray(act, dtype=float))
+            for _ in range(self._per_frame):
+                mujoco.mj_step(self.model, self.data)
+        time.sleep(1.0 / (FPS * 2))
+        return {"state": self.state()}
+
+    def render_policy_frame(self) -> np.ndarray:
+        """策略要的画面：主循环每帧顺手渲好的缓存。
+
+        不在这个函数里现渲——智能体在自己的线程里跑，而 MuJoCo 的 Renderer
+        不能两个线程同时用（实测会取到烂图，策略就完全抓不到东西）。
+        """
+        with self.lock:
+            frame = getattr(self, "_policy_frame", None)
+        if frame is None:
+            return np.zeros((POLICY_IMG[1], POLICY_IMG[0], 3), dtype=np.uint8)
+        return frame
+
+    def obs(self) -> dict:
+        return {"state": self.state(), "image": self.render_policy_frame()}
+
+    # ---------- 智能体模式 ----------
+    def start_agent(self, text: str) -> dict:
+        """收到一句话就开一个线程跑「大模型拆计划 → 执行 → 失败回传重规划」。"""
+        with self.lock:
+            if self.policy is None:
+                return {"ok": False, "error": "智能体模式要先加载策略（--policy）"}
+            if self.agent_state == "running":
+                return {"ok": False, "error": "上一条指令还在执行"}
+            self.agent_state = "running"
+            self.agent_text = text
+            self.agent_trace = []
+            self.agent_plan = None
+            self.agent_result = None
+            self.message = "大模型正在拆解指令…"
+        threading.Thread(target=self._agent_worker, args=(text,), daemon=True).start()
+        return {"ok": True}
+
+    def _agent_worker(self, text: str) -> None:
+        from src.agent import Executor
+
+        try:
+            ex = Executor(self, self.policy, self.policy_pre, self.policy_post, self.policy_device)
+            original_run = ex.run
+
+            def run_and_trace(plan, verbose: bool = True):
+                with self.lock:
+                    self.agent_plan = plan.to_dict()
+                    self.message = "计划：" + " → ".join(s.tool for s in plan.steps)
+                result = original_run(plan, verbose=verbose)
+                with self.lock:
+                    self.agent_trace.extend(result.get("trace", []))
+                    row = (result.get("trace") or [{}])[-1]
+                    ok = row.get("result", {}).get("ok")
+                    self.message = f"{row.get('tool', '?')} {'成功' if ok else '失败，把结果回传给大模型'}"
+                return result
+
+            ex.run = run_and_trace                      # 让页面能看到每一步
+            result = ex.run_until_done(text, max_turns=2, verbose=False)
+            with self.lock:
+                self.agent_result = result
+                self.message = "智能体完成：成功" if result.get("ok") else "智能体完成：没做成"
+        except Exception as e:  # noqa: BLE001 - 网页线程绝不能把异常漏出去
+            with self.lock:
+                self.message = f"智能体出错：{str(e)[:80]}"
+                self.agent_result = {"ok": False, "error": str(e)}
+        finally:
+            with self.lock:
+                self.agent_state = "done"
+
+    def reset(self, seed: int | None = None) -> dict:   # noqa: ARG002 - 网页场景固定，seed 只为兼容
+        self.do_reset()
+        return {"state": self.state()}
+
 
     def body_xyz(self, name: str) -> list[float]:
         return [float(v) for v in self.data.body(name).xpos]
 
     # ---------- 指令 ----------
     def command(self, text: str) -> dict:
+        if self.agent_enabled:
+            # 智能体模式：一句话交给大模型拆计划，执行过程异步跑，结果看 /api/status
+            return self.start_agent(text)
         body_map = {"red_cube": "cube", "blue_cube": "cube", "plate": "plate"}
         try:
             plan = parse_instruction(text)
@@ -251,14 +368,16 @@ class Sim:
             self._wp_t0 = time.time()
         return {"ok": True, "plan": plan.to_dict()}
 
-    def reset(self) -> None:
-        """把场景恢复初始状态，方便反复演示。"""
+    def do_reset(self) -> None:
+        """把场景恢复初始状态，方便反复演示（HTTP 的 /api/reset 和智能体的 home 都走这里）。"""
         with self.lock:
             self.data = mujoco.MjData(self.model)
             self.waypoints = []
             self.wp_index = 0
             self.plan = None
-            self.message = "等待指令"
+            if self.agent_state != "running":
+                # 智能体正在跑的时候不要把它的话盖掉（它自己会把进展写进 message）
+                self.message = "等待指令"
             self.ctrl_target = HOME_CTRL.copy()
             self.policy_queue = []
             self.policy_consumed = 0
@@ -289,11 +408,18 @@ class Sim:
         renderer = mujoco.Renderer(self.model, height=H, width=W)
         step = self.model.opt.timestep
         per_frame = max(1, int(round((1.0 / FPS) / step)))
+        with self.lock:
+            self._renderer = renderer        # 策略/智能体取画面要用同一个渲染器
+            self._per_frame = per_frame
         while self._running:
             t0 = time.time()
             with self.lock:
+                # 智能体线程自己在推进物理，主循环这时只负责渲染和看守
+                agent_busy = self.agent_state == "running"
                 policy_mode = self.policy is not None and self.plan is not None
-                if policy_mode:
+                if agent_busy:
+                    pass          # 物理由智能体线程推进（step() 里加锁自走），这里只渲染
+                elif policy_mode:
                     # 策略接管：每 POLICY_EXEC 步重新预测一次，其余步执行队列里的动作
                     if not self.policy_queue or self.policy_consumed >= POLICY_EXEC:
                         self._query_policy(renderer)
@@ -337,16 +463,24 @@ class Sim:
                         self.ctrl_target = np.array([*q, 0.0, wp["grip"][0], wp["grip"][1]])
                         self.data.ctrl[:] = self.ctrl_target
 
-            for _ in range(per_frame):
-                mujoco.mj_step(self.model, self.data)
+            if not agent_busy:
+                # 智能体线程自己推进物理，主循环别插手，否则两边各走一遍，动作会翻倍
+                for _ in range(per_frame):
+                    mujoco.mj_step(self.model, self.data)
 
             with self.lock:
                 self._apply_view()
             renderer.update_scene(self.data, camera=self.cam)
             buf = io.BytesIO()
             Image.fromarray(renderer.render()).save(buf, format="JPEG", quality=82)
+            # 顺手给策略渲一帧（训练同款相机）。渲染只在这一个线程里做，
+            # 智能体线程只读缓存——两个线程抢一个 Renderer 会取到烂图。
+            renderer.update_scene(self.data, camera=POLICY_CAMERA)
+            policy_frame = np.asarray(Image.fromarray(renderer.render()).resize(
+                POLICY_IMG, Image.BILINEAR)).copy()
             with self.lock:
                 self._jpeg = buf.getvalue()
+                self._policy_frame = policy_frame
                 self.frames += 1
 
             sleep = (1.0 / FPS) - (time.time() - t0)
@@ -368,6 +502,11 @@ class Sim:
                 "version": self.version,
                 "frames": self.frames,
                 "uptime": round(time.time() - self.started_at, 1),
+                "agent_state": self.agent_state,
+                "agent_text": self.agent_text,
+                "agent_plan": self.agent_plan,
+                "agent_trace": self.agent_trace[-8:],
+                "agent_result": self.agent_result,
             }
 
 
@@ -542,6 +681,27 @@ setInterval(async () => {
     badge.textContent = 'LIVE · ' + s.frames + ' 帧 · ' + Math.round(s.uptime) + 's';
     stateEl.textContent = s.message;
     buildEl.textContent = '服务启动于 ' + s.version + '　步骤 ' + s.step + '/' + s.total_steps;
+    // 智能体模式：把「计划 → 每步结果」画出来，这是演示的主角
+    if (s.agent_text) {
+      const plan = s.agent_plan
+        ? s.agent_plan.steps.map((x, i) => (i + 1) + '. ' + x.tool).join('　')
+        : '（大模型正在拆解…）';
+      let html = '<b>你说</b>：' + s.agent_text + '<br><b>计划</b>：' + plan;
+      const tr = (s.agent_trace || []).slice(-6);
+      if (tr.length) {
+        html += '<br><b>执行</b>：';
+        for (const row of tr) {
+          const r = row.result || {};
+          const ok = r.ok === true || (r.error === undefined && r.ok === undefined);
+          const bad = r.error || r.ok === false;
+          const detail = r.dist_mm !== undefined ? (' ' + r.dist_mm + ' mm')
+                        : (r.error ? (' ' + r.error) : '');
+          const mark = bad ? '❌' : (r.ok === true ? '✅' : '·');
+          html += '<br>　' + mark + ' ' + row.tool + detail;
+        }
+      }
+      buildEl.innerHTML = html;
+    }
   } catch (e) {
     badge.textContent = 'LIVE · 连接断开';
   }
@@ -611,6 +771,16 @@ class Handler(BaseHTTPRequestHandler):
             self.sim.reset()
             self._send(b'{"ok":true}', "application/json")
             return
+        if path == "/api/agent":
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = {}
+            result = self.sim.start_agent(str(payload.get("text", "")))
+            self._send(json.dumps(result, ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+            return
         if path != "/api/command":
             self.send_error(404)
             return
@@ -644,6 +814,9 @@ def main() -> int:
     ap.add_argument("--policy", type=Path, default=None,
                     help="指向 .../pretrained_model 目录：让网页跑训练好的 ACT，"
                          "而不是逆解轨迹。不传就用逆解。")
+    ap.add_argument("--agent", action="store_true",
+                    help="智能体模式：网页里每一句话先让大模型拆成工具计划，执行时逐步记录，"
+                         "失败会把真实结果回传给大模型重新出方案。需要同时给 --policy。")
     args = ap.parse_args()
     url = f"http://127.0.0.1:{args.port}"
 
@@ -662,6 +835,12 @@ def main() -> int:
             return 1
         sim.load_policy(args.policy)
         print(f"策略模式：{args.policy}")
+    if args.agent:
+        if args.policy is None:
+            print("``--agent`` 需要同时给 ``--policy``（智能体靠策略动手）")
+            return 1
+        sim.agent_enabled = True
+        print("智能体模式已开：网页会走「大模型拆计划 → 执行 → 失败回传重规划」")
     threading.Thread(target=sim.loop, daemon=True).start()
     Handler.sim = sim
 

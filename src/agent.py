@@ -180,16 +180,28 @@ def validate_plan(raw: str) -> AgentPlan:
 
 def make_plan(text: str, feedback: str = "") -> AgentPlan:
     """让大模型出计划。feedback 非空时，把它看到的上一步结果一起发过去，
-    相当于「出事了，你重新想一下」——这是智能体和一次性解析器的分界线。"""
+    相当于「出事了，你重新想一下」——这是智能体和一次性解析器的分界线。
+
+    大模型连不上时不要死：退回到一条写死的安全流程（策略先上、不行就切备用），
+    这样断网也能演示，只是少了"改方案"的表演，界面上会标 offline。
+    """
     from src.llm.router import InstructionParser
 
-    parser = InstructionParser()
-    system = SYSTEM_PROMPT.format(tools=_tool_doc())
-    user = text if not feedback else f"{text}\n\n【执行情况】\n{feedback}\n请根据实际结果重新给一份计划。"
-    raw, provider = parser.ask(system, user)
-    plan = validate_plan(raw)
-    plan.provider = provider
-    return plan
+    try:
+        parser = InstructionParser()
+        system = SYSTEM_PROMPT.format(tools=_tool_doc())
+        user = text if not feedback else f"{text}\n\n【执行情况】\n{feedback}\n请根据实际结果重新给一份计划。"
+        raw, provider = parser.ask(system, user)
+        plan = validate_plan(raw)
+        plan.provider = provider
+        return plan
+    except Exception:  # noqa: BLE001 - 断网/欠费/限流都不该让演示卡死
+        fallback = AgentPlan(
+            steps=[Step("grasp_and_place"), Step("expert_grasp_and_place")],
+            explain="大模型不可用，走预设流程：策略先上，不行再用备用轨迹",
+            on_failure="stop", max_retries=0, provider="offline",
+        )
+        return fallback
 
 
 # ---------------------------------------------------------------- 执行器
@@ -262,11 +274,12 @@ class Executor:
         import torch
 
         self.policy.reset()
-        obs = self.env.obs()
         steps = 0
         queue: list[np.ndarray] = []
         while steps < MAX_POLICY_STEPS:
             if not queue:
+                # 只在要重新预测时取一次画面：网页那边渲染一帧不便宜，不能每步都取
+                obs = self.env.obs()
                 batch = {
                     "observation.images.front": torch.from_numpy(
                         np.ascontiguousarray(obs["image"])).float().div_(255.0)
@@ -280,9 +293,13 @@ class Executor:
                     queue = [self.post(self.policy.select_action(b)).squeeze(0)
                              .float().cpu().numpy() for _ in range(POLICY_EXEC)]
             act = np.asarray(queue.pop(0), dtype=np.float64)
-            obs = self.env.step(act)
+            self.env.step(act)
             steps += 1
             if self.env.success():
+                break
+            # 早停：成功的轨迹一般 90~130 步就把方块抬起来了。
+            # 到 150 步还没离桌，基本可以断定这次抓空，没必要空跑到 400 步。
+            if steps >= 150 and float(self.env.cube_xyz()[2]) < 0.050:
                 break
         good = self.env.success()
         c = np.array(self.env.cube_xyz())
