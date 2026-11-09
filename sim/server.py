@@ -90,6 +90,7 @@ class Sim:
             for n in ARM_JOINTS
         ]
         self.policy = None
+        self.policy_alternates: list = []   # 主策略失败后依次换的备用策略
         self.policy_pre = None
         self.policy_post = None
         self.policy_device = None
@@ -173,6 +174,9 @@ class Sim:
         ens = EnsemblePolicy.from_paths(ckpts)
         with self.lock:
             self.policy = ens
+            # 主策略（集成）失败后依次换单模型再试——成员对象共用，不额外占显存
+            self.policy_alternates = ([EnsemblePolicy([m]) for m in ens.members]
+                                      if len(ens.members) > 1 else [])
             self.policy_pre = None            # 每个成员自己的归一化在 act() 里做
             self.policy_post = None
             self.policy_device = ens.device
@@ -279,7 +283,8 @@ class Sim:
         from src.agent import Executor
 
         try:
-            ex = Executor(self, self.policy, self.policy_pre, self.policy_post, self.policy_device)
+            ex = Executor(self, self.policy, self.policy_pre, self.policy_post,
+                          self.policy_device, alternates=self.policy_alternates)
             original_run = ex.run
 
             def run_and_trace(plan, verbose: bool = True):

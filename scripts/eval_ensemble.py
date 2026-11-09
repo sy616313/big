@@ -44,6 +44,12 @@ def main() -> int:
     ap.add_argument("--exec-steps", type=int, default=10)
     ap.add_argument("--seed-base", type=int, default=EVAL_SEED_BASE)
     ap.add_argument("--render", action="store_true")
+    ap.add_argument("--grip-mode", choices=["mean", "median", "median_all"], default="mean",
+                    help="怎么合并多个模型的预测：mean 全部取平均（默认）；median 关节取平均、"
+                         "夹爪取中位数；median_all 五个维度都取中位数（≥3 个模型时才有意义）")
+    ap.add_argument("--weights", type=float, nargs="+", default=None,
+                    help="各成员权重（会归一化）。不给就是等权。用来验证"
+                         "「三个模型变差其实是被不等权拖的」这个假设")
     ap.add_argument("--min-success", type=float, default=0.0,
                     help="成功率低于这个值就返回非 0 退出码（默认不卡）")
     args = ap.parse_args()
@@ -52,9 +58,12 @@ def main() -> int:
         print("至少要给两个模型")
         return 1
 
-    ens = EnsemblePolicy.from_paths(args.ckpt, exec_steps=args.exec_steps or None)
+    ens = EnsemblePolicy.from_paths(args.ckpt, exec_steps=args.exec_steps or None,
+                                    grip_mode=args.grip_mode, weights=args.weights)
+    print(f"权重：{ens.weights}")
     dev = ens.device
-    print(f"集成 {len(ens.members)} 个模型：{' + '.join(ens.names)}")
+    print(f"集成 {len(ens.members)} 个模型：{' + '.join(ens.names)}"
+          f"（合并方式 {ens.grip_mode}）")
     print(f"每 {ens.config.n_action_steps} 步重规划\n")
 
     env = PickPlaceEnv(render=True)   # 策略要画面，必须开渲染；--render 只控制存图

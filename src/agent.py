@@ -213,10 +213,11 @@ class Executor:
     """把工具调用落到仿真上。不依赖网页，命令行和网页共用同一套。"""
 
     def __init__(self, env, policy=None, pre=None, post=None, device=None,
-                 seed: int | None = None) -> None:
+                 seed: int | None = None, alternates=None) -> None:
         self.env = env
         self.policy = policy
         self.pre, self.post, self.device = pre, post, device
+        self.alternates = alternates or []   # 主策略失败后依次换的备用策略
         self.seed = seed          # 复位时用同一个种子，保证"重来一局"还是同一个场景
         self.trace: list[dict] = []
 
@@ -272,12 +273,11 @@ class Executor:
                 "cube": [round(float(v), 3) for v in c],
                 "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1)}
 
-    def grasp_and_place(self) -> dict:
-        if self.policy is None:
-            raise PlanError("这个执行器没加载策略，不能抓放")
+    def _run_policy_attempt(self, policy) -> dict:
+        """一个策略在一次复位后跑一遍完整抓放。"""
         import torch
 
-        self.policy.reset()
+        policy.reset()
         steps = 0
         queue: list[np.ndarray] = []
         while steps < MAX_POLICY_STEPS:
@@ -293,12 +293,12 @@ class Executor:
                 }
                 b = self.pre(batch) if self.pre is not None else batch
                 with torch.no_grad():
-                    if self.pre is None and hasattr(self.policy, "act"):
+                    if self.pre is None and hasattr(policy, "act"):
                         # 集成策略：自己管归一化，传入原始 batch
-                        queue = list(self.policy.act(batch, POLICY_EXEC))
+                        queue = list(policy.act(batch, POLICY_EXEC))
                     else:
-                        self.policy.reset()
-                        queue = [self.post(self.policy.select_action(b)).squeeze(0)
+                        policy.reset()
+                        queue = [self.post(policy.select_action(b)).squeeze(0)
                                  .float().cpu().numpy() for _ in range(POLICY_EXEC)]
             act = np.asarray(queue.pop(0), dtype=np.float64)
             self.env.step(act)
@@ -309,10 +309,33 @@ class Executor:
             # 到 150 步还没离桌，基本可以断定这次抓空，没必要空跑到 400 步。
             if steps >= 150 and float(self.env.cube_xyz()[2]) < 0.050:
                 break
-        good = self.env.success()
+        return {"ok": bool(self.env.success()), "steps": steps}
+
+    def grasp_and_place(self) -> dict:
+        """先上主策略；没成就在同一局重来一次，换下一个策略。
+
+        为什么允许重试：单次成功率只有 76%，不同模型的失败场景并不重合——
+        实测 160 局里，"两个模型集成"漏掉的 25 局中，有 25 局能被单独某一个救回来。
+        重试前必须复位（回待机位 + 方块盘子回原位），否则是在乱糟糟的状态上硬抓。
+        """
+        if self.policy is None:
+            raise PlanError("这个执行器没加载策略，不能抓放")
+
+        plans = [self.policy] + list(self.alternates or [])
+        last = {}
+        for i, pol in enumerate(plans):
+            if i > 0:
+                self.home()          # 同一局重来，场景不变
+            last = self._run_policy_attempt(pol)
+            if last["ok"]:
+                c = np.array(self.env.cube_xyz())
+                p = np.array(self.env.plate_xyz())
+                return {"ok": True, "steps": last["steps"], "attempts": i + 1,
+                        "cube": [round(float(v), 3) for v in c],
+                        "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1)}
         c = np.array(self.env.cube_xyz())
         p = np.array(self.env.plate_xyz())
-        return {"ok": bool(good), "steps": steps,
+        return {"ok": False, "steps": last.get("steps", 0), "attempts": len(plans),
                 "cube": [round(float(v), 3) for v in c],
                 "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1)}
 
