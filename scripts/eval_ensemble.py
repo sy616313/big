@@ -49,6 +49,11 @@ def main() -> int:
 
     models = []
     for p in args.ckpt:
+        # 必须转成绝对路径：相对路径带反斜杠会被 huggingface_hub 当成 repo id 报错
+        p = p.expanduser().resolve()
+        if not p.is_dir():
+            print(f"模型目录不存在：{p}")
+            return 1
         cfg, policy, pre, post = load_policy(p)
         if args.exec_steps:
             policy.config.n_action_steps = args.exec_steps

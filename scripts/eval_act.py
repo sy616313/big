@@ -104,7 +104,7 @@ def main() -> int:
                          "必须和 add_state_history.py 训练出来的模型配套")
     ap.add_argument("--ensemble", action="store_true",
                     help="ACT 论文的时序集成：每一步都重新预测一整块，对同一时刻被多次预测到的动作"
-                         "做指数加权平均再执行。论文报告 +3.3%，只增加推理开销")
+                         "做指数加权平均再执行。论文报告 +3.3%%，只增加推理开销")
     ap.add_argument("--ensemble-m", type=float, default=0.01,
                     help="集成衰减系数，越小越信任最新的预测（论文默认 0.01）")
     args = ap.parse_args()
