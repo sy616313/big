@@ -180,7 +180,7 @@ def main() -> int:
   <div class="card"><div class="n green">100%</div><div class="t">机器示范策略<br>50 局对照基线</div></div>
   <div class="card"><div class="n blue">84%</div><div class="t">人类示范策略<br>80 局全新场景</div></div>
   <div class="card"><div class="n green">100%</div><div class="t">策略 + 大模型兜底<br>100 局端到端</div></div>
-  <div class="card"><div class="n">约 8 秒</div><div class="t">网页里从说一句话<br>到方块放进盘子</div></div>
+  <div class="card"><div class="n">约 2–3 秒</div><div class="t">网页里说一句话<br>到方块放进盘子（实测 3 轮）</div></div>
 </div>
 
 <h2>一、系统怎么跑</h2>
