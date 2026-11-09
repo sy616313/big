@@ -133,6 +133,11 @@ def build_argv(a: argparse.Namespace) -> list[str]:
         argv.append(f"--policy.n_action_steps={a.n_action_steps}")
     if a.reset_after is not None:
         argv.append(f"--policy.drop_n_last_frames={a.reset_after}")
+    if a.policy_path:
+        # 从已有权重接着训（微调）。注意路径必须是 .../pretrained_model 目录。
+        # LeRobot 规定 --policy.path 和 --policy.type 不能同时给，所以先把 type 摘掉
+        argv = [x for x in argv if not x.startswith("--policy.type=")]
+        argv.insert(4, f"--policy.path={a.policy_path.resolve()}")
     if a.n_obs_steps:
         argv.append(f"--policy.n_obs_steps={a.n_obs_steps}")
     return argv
@@ -146,6 +151,9 @@ def main() -> int:
     ap.add_argument("--output", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--policy", default="act",
                     help="策略类型：act（默认）或 diffusion。人类示范多变时看 diffusion 是否更稳")
+    ap.add_argument("--policy-path", type=Path, default=None,
+                    help="从已有权重接着训（LeRobot 的 --policy.path）。"
+                         "典型用法：先用 300 条机器示范训出精确抓取，再用人类示范微调")
     ap.add_argument("--chunk-size", type=int, default=None,
                     help="一次预测多少步（默认 100）。调小能让一条轨迹切成多块，闭环才有意义")
     ap.add_argument("--n-action-steps", type=int, default=None,
