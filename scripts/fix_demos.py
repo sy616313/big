@@ -79,11 +79,17 @@ def first_frame(ds: LeRobotDataset, i: int) -> np.ndarray:
 
 
 def find_seed(env: PickPlaceEnv, ds: LeRobotDataset, i: int, search: int) -> tuple[int, float]:
-    """靠"第一帧画面"把场景种子认出来：同一个种子渲出来的首帧几乎逐像素相同。"""
+    """靠"第一帧画面"把场景种子认出来：同一个种子渲出来的首帧几乎逐像素相同。
+
+    搜索范围是**整个种子池**（20000 起 search 个），不是"20000+i 附近"。
+    踩过这个坑：一次全量跑下来 154 条里有 115 条认不出——因为遥操作分了几个场次，
+    每场次的种子又从低位重新开始用，按"第几条 = 第几个种子"去找根本找不着。
+    多渲几百帧（几分钟）换 100% 的识别率，值得。
+    """
     ref = first_frame(ds, i)
     best_seed, best_mse = -1, 1e18
-    for off in range(-8, search):
-        seed = SEED_BASE + i + off
+    for off in range(-5, search):
+        seed = SEED_BASE + off
         try:
             env.reset(seed=seed)
             img = env.image().astype(np.float32)
@@ -110,7 +116,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=ROOT / "data" / "human_v2")
     ap.add_argument("--out", type=Path, default=ROOT / "data" / "human_fix")
-    ap.add_argument("--search", type=int, default=45,
+    ap.add_argument("--search", type=int, default=200,
                     help="每个种子往前搜多少个（遥操作每次尝试都会消耗种子，间隔可能拉得很大）")
     ap.add_argument("--back", type=int, default=18, help="合爪前改多少帧")
     ap.add_argument("--fwd", type=int, default=6, help="合爪后改多少帧")
