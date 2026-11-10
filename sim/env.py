@@ -120,10 +120,63 @@ def trail_reachable(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> bool:
     return True
 
 
+def sample_plate_xy(rng, cube_xy: tuple[float, float] | None = None):
+    """盘子的随机位置：留在工作垫上、离底座够远、离方块够远。
+
+    注意：这里**不**校验专家轨迹是否可达。这个分支只在外部分指定方块位置时走到
+    （比如评估用的分布外测试），那种位置本来就是专家够不着的；
+    拿专家的可达性去卡它，会导致"找不到可用盘子"直接报错，测不了。
+    """
+    for _ in range(2000):
+        r = rng.uniform(*PLATE_R)
+        th = rng.uniform(*PLATE_TH)
+        x, y = r * np.cos(th), r * np.sin(th)
+        if not (PLATE_PAD_X[0] <= x <= PLATE_PAD_X[1]):
+            continue
+        if not (PLATE_PAD_Y[0] <= y <= PLATE_PAD_Y[1]):
+            continue
+        if cube_xy is not None and np.hypot(x - cube_xy[0], y - cube_xy[1]) < MIN_CUBE_PLATE_DIST:
+            continue
+        return float(x), float(y)
+    return None
+
+
+def sample_cube_xy(rng, plate_xy: tuple[float, float]):
+    """方块的随机位置，且整条专家轨迹（含搬运到这只盘子）都够得着。"""
+    for _ in range(3000):
+        r = rng.uniform(*SAMPLE_R)
+        th = rng.uniform(*SAMPLE_TH)
+        x, y = r * np.cos(th), r * np.sin(th)
+        if not (SAMPLE_X[0] <= x <= SAMPLE_X[1]):
+            continue
+        if not (SAMPLE_Y[0] <= y <= SAMPLE_Y[1]):
+            continue
+        if np.hypot(x - plate_xy[0], y - plate_xy[1]) < MIN_CUBE_PLATE_DIST:
+            continue
+        if not trail_reachable((x, y, CUBE_REST_Z), plate_xy):
+            continue
+        return float(x), float(y)
+    return None
+
+
+def sample_scene(rng):
+    """成对采样：先挑盘子，再挑一个能搬到这只盘子上的方块。
+
+    网页演示（sim/server.py）也用这一份，保证演示里随机出来的场景和训练/评估同分布。
+    """
+    for _ in range(300):
+        plate = sample_plate_xy(rng)
+        if plate is None:
+            continue
+        cube = sample_cube_xy(rng, plate)
+        if cube is None:
+            continue
+        return cube, plate
+    raise RuntimeError("采样失败：可达范围可能变了，检查 SAMPLE_* / PLATE_* 与 arm_scene.xml")
+
+
 def dataset_features() -> dict:
     """LeRobot 数据集里每帧的字段定义。
-
-    采集（collect.py，专家自动生成）和遥操作（teleop.py，人手开）都写同一种格式，
     所以这个定义只能有一份——两边各写一份，训练时字段对不上会很难查。
     """
     return {
@@ -219,56 +272,14 @@ class PickPlaceEnv:
         self.data.mocap_pos[self.plate_mid] = [x, y, PLATE_Z]
         mujoco.mj_forward(self.model, self.data)
 
-    def sample_plate_xy(self, rng: np.random.Generator,
-                        cube_xy: tuple[float, float] | None = None) -> tuple[float, float] | None:
-        """盘子的随机位置：留在工作垫上、离底座够远、离方块够远、整条轨迹可达。"""
-        for _ in range(2000):
-            r = rng.uniform(*PLATE_R)
-            th = rng.uniform(*PLATE_TH)
-            x, y = r * np.cos(th), r * np.sin(th)
-            if not (PLATE_PAD_X[0] <= x <= PLATE_PAD_X[1]):
-                continue
-            if not (PLATE_PAD_Y[0] <= y <= PLATE_PAD_Y[1]):
-                continue
-            if cube_xy is not None:
-                if np.hypot(x - cube_xy[0], y - cube_xy[1]) < MIN_CUBE_PLATE_DIST:
-                    continue
-                # 这里**不**校验专家轨迹是否可达。
-                # 这个分支只在外部分指定方块位置时走到（比如评估用的分布外测试），
-                # 那种位置本来就是专家够不着的；拿专家的可达性去卡它，
-                # 会导致"找不到可用盘子"直接报错，测不了。
-            return float(x), float(y)
-        return None
+    def sample_plate_xy(self, rng, cube_xy=None):
+        return sample_plate_xy(rng, cube_xy)
 
-    def sample_cube_xy(self, rng: np.random.Generator,
-                       plate_xy: tuple[float, float]) -> tuple[float, float] | None:
-        """方块的随机位置，且整条专家轨迹（含搬运到这只盘子）都够得着。"""
-        for _ in range(3000):
-            r = rng.uniform(*SAMPLE_R)
-            th = rng.uniform(*SAMPLE_TH)
-            x, y = r * np.cos(th), r * np.sin(th)
-            if not (SAMPLE_X[0] <= x <= SAMPLE_X[1]):
-                continue
-            if not (SAMPLE_Y[0] <= y <= SAMPLE_Y[1]):
-                continue
-            if np.hypot(x - plate_xy[0], y - plate_xy[1]) < MIN_CUBE_PLATE_DIST:
-                continue
-            if not trail_reachable((x, y, CUBE_REST_Z), plate_xy):
-                continue
-            return float(x), float(y)
-        return None
+    def sample_cube_xy(self, rng, plate_xy):
+        return sample_cube_xy(rng, plate_xy)
 
-    def sample_scene(self, rng: np.random.Generator) -> tuple[tuple[float, float], tuple[float, float]]:
-        """成对采样：先挑盘子，再挑一个能搬到这只盘子上的方块。"""
-        for _ in range(300):
-            plate = self.sample_plate_xy(rng)
-            if plate is None:
-                continue
-            cube = self.sample_cube_xy(rng, plate)
-            if cube is None:
-                continue
-            return cube, plate
-        raise RuntimeError("采样失败：可达范围可能变了，检查 SAMPLE_* / PLATE_* 与 arm_scene.xml")
+    def sample_scene(self, rng):
+        return sample_scene(rng)
 
     def _place_cube(self, x: float, y: float) -> None:
         self.data.qpos[self.cube_qadr:self.cube_qadr + 7] = [x, y, CUBE_REST_Z + 0.003, 1, 0, 0, 0]

@@ -123,6 +123,10 @@ class PlanError(RuntimeError):
     pass
 
 
+class Aborted(RuntimeError):
+    """用户中途切到手动模式：用来打断正在跑的策略/计划。"""
+
+
 def _strip_fence(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)

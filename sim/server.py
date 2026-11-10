@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SCENE = ROOT / "sim" / "arm_scene.xml"
 
-from sim.env import HOME_XYZ  # noqa: E402
+from sim.env import CUBE_REST_Z, HOME_XYZ, PLATE_Z, sample_scene  # noqa: E402
 from sim.kinematics import Unreachable, ik  # noqa: E402
 from src.llm import parse as parse_instruction  # noqa: E402
 
@@ -111,6 +111,25 @@ class Sim:
         self.plate_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "plate")
         self.plate_mid = int(self.model.body_mocapid[self.plate_body])
         self._plate_home = np.array(self.data.body("plate").xpos, dtype=float).copy()
+
+        # 方块是自由体：记住它的 qpos/qvel 地址，换场景时直接改
+        self.cube_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "cube")
+        self.cube_qadr = int(self.model.jnt_qposadr[self.model.body_jntadr[self.cube_body]])
+        self.cube_vadr = int(self.model.jnt_dofadr[self.model.body_jntadr[self.cube_body]])
+        self.scene = {
+            "cube": tuple(float(v) for v in self.data.qpos[self.cube_qadr:self.cube_qadr + 2]),
+            "plate": tuple(float(v) for v in self.data.body("plate").xpos[:2]),
+        }
+        self.scene_count = 0
+
+        # 网页控制：暂停 / 模式（智能体 or 手动）/ 手动点动
+        self.paused = False
+        self.pause_gate = threading.Event()
+        self.pause_gate.set()                 # set = 正在跑；clear = 冻结
+        self.mode = "agent" if self.agent_enabled else "auto"
+        self.agent_abort = False
+        self.manual_target = self.tip().copy()
+        self.manual_grip = float(GRIP_OPEN[0])
 
     @staticmethod
     def _blank() -> bytes:
@@ -240,6 +259,10 @@ class Sim:
 
     def step(self, act) -> dict:
         """智能体线程专用的推进：加锁走一帧物理，睡一小会儿让网页看得清。"""
+        self.pause_gate.wait()               # 暂停时卡在这里，物理不动
+        if self.agent_abort:
+            from src.agent import Aborted
+            raise Aborted("用户切到手动模式")
         with self.lock:
             self._apply_action(np.asarray(act, dtype=float))
             for _ in range(self._per_frame):
@@ -268,9 +291,15 @@ class Sim:
         with self.lock:
             if self.policy is None:
                 return {"ok": False, "error": "智能体模式要先加载策略（--policy）"}
+            if self.mode == "manual":
+                return {"ok": False, "error": "现在是手动模式，先切回智能体模式"}
             if self.agent_state == "running":
                 return {"ok": False, "error": "上一条指令还在执行"}
+            if self.paused:                   # 暂停状态下开会一直卡在 step() 里
+                self.paused = False
+                self.pause_gate.set()
             self.agent_state = "running"
+            self.agent_abort = False
             self.agent_text = text
             self.agent_trace = []
             self.agent_plan = None
@@ -280,7 +309,7 @@ class Sim:
         return {"ok": True}
 
     def _agent_worker(self, text: str) -> None:
-        from src.agent import Executor
+        from src.agent import Aborted, Executor
 
         try:
             ex = Executor(self, self.policy, self.policy_pre, self.policy_post,
@@ -304,6 +333,10 @@ class Sim:
             with self.lock:
                 self.agent_result = result
                 self.message = "智能体完成：成功" if result.get("ok") else "智能体完成：没做成"
+        except Aborted:
+            with self.lock:
+                self.message = "已切到手动模式，智能体的动作中止了"
+                self.agent_result = {"ok": False, "aborted": True}
         except Exception as e:  # noqa: BLE001 - 网页线程绝不能把异常漏出去
             with self.lock:
                 self.message = f"智能体出错：{str(e)[:80]}"
@@ -320,8 +353,89 @@ class Sim:
     def body_xyz(self, name: str) -> list[float]:
         return [float(v) for v in self.data.body(name).xpos]
 
+    # ---------- 场景 / 暂停 / 模式 ----------
+    def _apply_scene(self) -> None:
+        """按 self.scene 里的坐标摆盘子和方块（方块是自由体，直接写 qpos）。"""
+        px, py = self.scene["plate"]
+        cx, cy = self.scene["cube"]
+        self.data.mocap_pos[self.plate_mid] = [px, py, PLATE_Z]
+        self.data.qpos[self.cube_qadr:self.cube_qadr + 7] = [cx, cy, CUBE_REST_Z + 0.003,
+                                                             1.0, 0.0, 0.0, 0.0]
+        self.data.qvel[self.cube_vadr:self.cube_vadr + 6] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+
+    def new_scene(self, seed: int | None = None) -> dict:
+        """换一套随机的方块/盘子位置。
+
+        采样的规则和训练数据完全一致（sim.env.sample_scene），所以演示里随机出来的场景
+        和训练/评估是同一个分布——评委看到的不是预先摆好的位置。
+        """
+        rng = np.random.default_rng(seed) if seed is not None else np.random.default_rng()
+        cube, plate = sample_scene(rng)
+        with self.lock:
+            self.scene = {"cube": tuple(cube), "plate": tuple(plate)}
+            self.do_reset()
+            self.scene_count += 1
+            self.message = (f"新场景 #{self.scene_count}：方块 ({cube[0]:.2f}, {cube[1]:.2f})"
+                            f"　盘子 ({plate[0]:.2f}, {plate[1]:.2f})")
+            return {"ok": True, "cube": [round(v, 3) for v in cube],
+                    "plate": [round(v, 3) for v in plate], "scene": self.scene_count}
+
+    def set_paused(self, paused: bool) -> dict:
+        """暂停/继续：暂停时物理不动、智能体线程也会卡在 step() 里不动。"""
+        with self.lock:
+            self.paused = bool(paused)
+            if self.paused:
+                self.pause_gate.clear()
+                self.message = "已暂停（物理冻结，可以切模式）"
+            else:
+                self.pause_gate.set()
+                self.message = "继续"
+            return {"ok": True, "paused": self.paused}
+
+    def set_mode(self, mode: str) -> dict:
+        """切换智能体模式 / 手动模式。切到手动时会把还在跑的智能体中止掉。"""
+        if mode not in ("agent", "manual", "auto"):
+            return {"ok": False, "error": f"不认识的模式：{mode}"}
+        with self.lock:
+            if mode == "manual" and self.agent_state == "running":
+                self.agent_abort = True      # 让智能体线程在下一步抛 Aborted 退出
+            self.mode = mode
+            if mode == "manual":
+                self.plan = None
+                self.policy_queue = []
+                self.policy_consumed = 0
+                self.policy_steps = 0
+                self.waypoints = []
+                self.wp_index = 0
+                self.manual_target = self.tip().copy()
+                self.message = ("手动模式" + ("（还暂停着，点「继续」才能动）" if self.paused
+                                             else "：方向键移动，空格开合爪子"))
+            elif mode == "agent":
+                self.message = ("智能体模式" + ("（还暂停着，点「继续」才会动）" if self.paused
+                                               else "：打一句话让它自己干"))
+            return {"ok": True, "mode": self.mode}
+
+    def jog(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> dict:
+        """手动点动：把目标点挪一点，主循环按 0.1 m/s 限速走过去。"""
+        with self.lock:
+            t = self.manual_target + np.array([dx, dy, dz], dtype=float)
+            # 夹在够得着的范围里，否则逆解一直报错
+            t[0] = float(np.clip(t[0], 0.10, 0.30))
+            t[1] = float(np.clip(t[1], -0.22, 0.22))
+            t[2] = float(np.clip(t[2], 0.006, 0.26))
+            self.manual_target = t
+            return {"ok": True, "target": [round(float(v), 3) for v in t]}
+
+    def set_grip(self, open_: bool) -> dict:
+        with self.lock:
+            self.manual_grip = float(GRIP_OPEN[0]) if open_ else 0.0
+            return {"ok": True, "grip": self.manual_grip}
+
     # ---------- 指令 ----------
     def command(self, text: str) -> dict:
+        if self.mode == "manual":
+            return {"ok": False, "error": "现在是手动模式，先切回智能体模式再下指令"}
         if self.agent_enabled:
             # 智能体模式：一句话交给大模型拆计划，执行过程异步跑，结果看 /api/status
             return self.start_agent(text)
@@ -365,9 +479,14 @@ class Sim:
         return {"ok": True, "plan": plan.to_dict()}
 
     def do_reset(self) -> None:
-        """把场景恢复初始状态，方便反复演示（HTTP 的 /api/reset 和智能体的 home 都走这里）。"""
+        """把场景恢复初始状态，方便反复演示（HTTP 的 /api/reset 和智能体的 home 都走这里）。
+
+        注意：会重新摆回 self.scene 里记着的那一组坐标，所以"重置"是同一局重来，
+        "换场景"才会抽新的方块/盘子位置。
+        """
         with self.lock:
             self.data = mujoco.MjData(self.model)
+            self._apply_scene()               # 新 MjData 会把方块和盘子放回模型默认位置
             self.waypoints = []
             self.wp_index = 0
             self.plan = None
@@ -384,6 +503,23 @@ class Sim:
             for _ in range(500):
                 self.data.ctrl[:] = self.ctrl_target
                 mujoco.mj_step(self.model, self.data)
+            self.manual_target = self.tip().copy()
+
+    def _manual_step(self, per_frame: int) -> None:
+        """手动模式：按 0.1 m/s 朝点动目标走，夹爪用 self.manual_grip。"""
+        dt = per_frame * self.model.opt.timestep
+        delta = self.manual_target - self._cmd_p
+        dist = float(np.linalg.norm(delta))
+        if dist > 1e-9:
+            self._cmd_p = self._cmd_p + delta * min(1.0, 0.10 * dt / dist)
+        try:
+            q = ik(self._cmd_p[0], self._cmd_p[1], self._cmd_p[2])
+        except Unreachable:
+            self.manual_target = self._cmd_p.copy()   # 别再往外走了，停在够得着的边上
+            return
+        g = float(self.manual_grip)
+        self.ctrl_target = np.array([*q, 0.0, g, -g])
+        self.data.ctrl[:] = self.ctrl_target
 
     def _advance(self) -> None:
         if self.wp_index >= len(self.waypoints):
@@ -413,8 +549,12 @@ class Sim:
                 # 智能体线程自己在推进物理，主循环这时只负责渲染和看守
                 agent_busy = self.agent_state == "running"
                 policy_mode = self.policy is not None and self.plan is not None
-                if agent_busy:
+                if self.paused:
+                    pass          # 冻结：什么都不推进，只把当前画面继续推给浏览器
+                elif agent_busy:
                     pass          # 物理由智能体线程推进（step() 里加锁自走），这里只渲染
+                elif self.mode == "manual":
+                    self._manual_step(per_frame)
                 elif policy_mode:
                     # 策略接管：每 POLICY_EXEC 步重新预测一次，其余步执行队列里的动作
                     if not self.policy_queue or self.policy_consumed >= POLICY_EXEC:
@@ -459,7 +599,7 @@ class Sim:
                         self.ctrl_target = np.array([*q, 0.0, wp["grip"][0], wp["grip"][1]])
                         self.data.ctrl[:] = self.ctrl_target
 
-            if not agent_busy:
+            if not agent_busy and not self.paused:
                 # 智能体线程自己推进物理，主循环别插手，否则两边各走一遍，动作会翻倍
                 for _ in range(per_frame):
                     mujoco.mj_step(self.model, self.data)
@@ -495,6 +635,12 @@ class Sim:
                 "step": self.wp_index,
                 "total_steps": len(self.waypoints),
                 "cube": [round(v, 3) for v in self.body_xyz("cube")],
+                "plate": [round(v, 3) for v in self.body_xyz("plate")],
+                "tip": [round(float(v), 3) for v in self.tip()],
+                "mode": self.mode,
+                "paused": self.paused,
+                "scene": self.scene_count,
+                "success": bool(self._policy_done()),
                 "version": self.version,
                 "frames": self.frames,
                 "uptime": round(time.time() - self.started_at, 1),
@@ -508,201 +654,285 @@ class Sim:
 
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>轻量具身智能体 · 本地 Demo</title>
 <style>
   :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
   body { margin:0; background:#0f1419; color:#e6edf3;
          font-family:"Microsoft YaHei",system-ui,sans-serif; }
-  .wrap { max-width:900px; margin:24px auto; padding:0 16px; }
-  h1 { font-size:18px; font-weight:600; margin:0 0 4px; }
-  .sub { color:#8b949e; font-size:13px; margin-bottom:16px; }
-  .stage { position:relative; border-radius:10px; overflow:hidden;
-           background:#000; box-shadow:0 8px 24px rgba(0,0,0,.4); }
+  .app { max-width:940px; margin:20px auto 44px; padding:0 16px; }
+  header { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; font-weight:600; }
+  header .sub { color:#8b949e; font-size:12.5px; }
+  .stage { position:relative; border-radius:12px; overflow:hidden; background:#000;
+           box-shadow:0 10px 30px rgba(0,0,0,.45); cursor:grab; }
+  .stage.dragging { cursor:grabbing; }
   .stage img { display:block; width:100%; }
-  .badge { position:absolute; left:12px; top:12px; background:rgba(0,0,0,.55);
-           padding:4px 10px; border-radius:999px; font-size:12px; color:#9fe0a8; }
-  .state { position:absolute; left:12px; bottom:12px; background:rgba(0,0,0,.55);
-           padding:4px 10px; border-radius:8px; font-size:12px; color:#e6edf3; }
-  form { display:flex; gap:8px; margin-top:14px; }
-  input { flex:1; padding:11px 14px; border-radius:8px; border:1px solid #30363d;
+  .chip { position:absolute; padding:5px 11px; border-radius:999px; font-size:12px;
+          background:rgba(13,17,23,.72); }
+  #live { left:12px; top:12px; color:#7ee787; letter-spacing:.5px; }
+  #live.off { color:#f0883e; }
+  #status { left:12px; bottom:12px; max-width:74%; }
+  #meta { right:12px; bottom:12px; color:#9aa4b2; font-family:Consolas,monospace; font-size:11.5px; }
+  .bar { display:flex; gap:8px; align-items:center; margin-top:14px; flex-wrap:wrap; }
+  .seg { display:flex; background:#161b22; border:1px solid #30363d; border-radius:9px; overflow:hidden; }
+  .seg button { background:transparent; border:0; color:#8b949e; padding:10px 16px;
+                font-size:14px; cursor:pointer; font-weight:600; }
+  .seg button.on { background:#1f6feb; color:#fff; }
+  .bar .sp { flex:1; }
+  .alt { background:#21262d; border:1px solid #30363d; color:#e6edf3; border-radius:9px;
+         padding:10px 14px; font-size:14px; cursor:pointer; }
+  .alt:hover { background:#30363d; }
+  form { display:flex; gap:8px; margin-top:12px; }
+  input { flex:1; padding:12px 14px; border-radius:9px; border:1px solid #30363d;
           background:#161b22; color:#e6edf3; font-size:15px; }
-  button { padding:11px 20px; border-radius:8px; border:0; cursor:pointer;
-           background:#2f6feb; color:#fff; font-size:15px; font-weight:600; }
-  button:disabled { opacity:.5; cursor:default; }
-  .log { margin-top:12px; font-size:13px; color:#8b949e; min-height:44px;
-         background:#161b22; border:1px solid #21262d; border-radius:8px; padding:10px 12px;
-         white-space:pre-wrap; font-family:Consolas,monospace; }
-  .hint { margin-top:10px; font-size:12px; color:#6e7681; }
-  .stage { cursor: grab; }
-  .stage.dragging { cursor: grabbing; }
-  button.alt { background:#21262d; border:1px solid #30363d; font-weight:500; }
-  .build { margin-top:10px; font-size:12px; color:#6e7681; font-family:Consolas,monospace; }
+  input:focus { outline:2px solid #1f6feb; outline-offset:-1px; }
+  .primary { padding:12px 22px; border-radius:9px; border:0; background:#2f6feb;
+             color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+  .primary:disabled { opacity:.45; cursor:default; }
+  .panel { margin-top:12px; background:#161b22; border:1px solid #21262d;
+           border-radius:11px; padding:14px 16px; }
+  .tl { font-size:13.5px; line-height:1.85; white-space:pre-wrap; color:#c9d1d9; }
+  .manual { display:flex; gap:34px; align-items:center; justify-content:center; flex-wrap:wrap; }
+  .pad { display:grid; grid-template-columns:repeat(3,60px); grid-template-rows:repeat(3,46px); gap:8px; }
+  .pad button, .vpad button { border-radius:10px; border:1px solid #30363d; background:#21262d;
+                              color:#e6edf3; font-size:13px; cursor:pointer; user-select:none; }
+  .pad button:active, .vpad button:active { background:#1f6feb; }
+  .vpad { display:flex; flex-direction:column; gap:10px; }
+  .vpad button { padding:12px 18px; }
+  .grip { padding:14px 18px; border-radius:11px; border:1px solid #30363d; background:#21262d;
+          color:#e6edf3; font-size:14px; cursor:pointer; min-width:132px; }
+  .grip.open { background:#1a7f37; border-color:#2ea043; }
+  .hint { color:#6e7681; font-size:12px; text-align:center; margin-top:12px; }
+  footer { margin-top:14px; color:#6e7681; font-size:11.5px; font-family:Consolas,monospace;
+           display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; }
 </style></head>
-<body><div class="wrap">
-  <h1>轻量具身智能体 · 本地 Demo</h1>
-  <div class="sub">仿真中：六轴机械臂 / 红方块 / 蓝盘子 · 跑在 127.0.0.1</div>
-  <div class="stage">
-    <div class="badge" id="badge">LIVE</div>
-    <div class="state" id="state">等待指令</div>
-    <img id="sim" src="/stream" alt="sim">
+<body><div class="app">
+
+<header>
+  <h1>轻量具身智能体</h1>
+  <span class="sub">六轴机械臂 · 红方块 · 蓝盘子 · 本地实时仿真（不是录屏）</span>
+</header>
+
+<div class="stage" id="stage">
+  <img id="sim" src="/stream" alt="sim">
+  <div class="chip" id="live">LIVE</div>
+  <div class="chip" id="status">正在连接…</div>
+  <div class="chip" id="meta">—</div>
+</div>
+
+<div class="bar">
+  <div class="seg" id="modes">
+    <button data-mode="agent" class="on">智能体模式</button>
+    <button data-mode="manual">手动模式</button>
   </div>
+  <button class="alt" id="pause">暂停</button>
+  <span class="sp"></span>
+  <button class="alt" id="scene">换个场景</button>
+  <button class="alt" id="reset">同一局重来</button>
+</div>
+
+<section id="panel-agent">
   <form id="f">
-    <input id="q" autocomplete="off"
-           placeholder="说一句话，比如：把红色方块放到盘子上">
-    <button id="b">执行</button>
-    <button type="button" id="demo" class="alt">一键演示</button>
-    <button type="button" id="reset" class="alt">重置</button>
-    <button type="button" id="viewreset" class="alt">复位视角</button>
+    <input id="q" autocomplete="off" placeholder="说一句话，比如：把红色方块放到盘子上">
+    <button class="primary" id="run">执行</button>
   </form>
-  <div class="log" id="log">等待指令……</div>
-  <div class="hint">拖动旋转 · 滚轮缩放 · 右键平移 · 双击复位视角｜下面只能下机器人指令，不是终端</div>
-  <div class="build" id="build">正在连接服务……</div>
+  <div class="panel"><div class="tl" id="tl">说一句话，大模型会把它拆成「看一眼 → 挪盘子 → 抓放」，每一步的真实结果都显示在这里。</div></div>
+</section>
+
+<section id="panel-manual" hidden>
+  <div class="panel">
+    <div class="manual">
+      <div class="pad">
+        <span></span><button data-k="x+">远 X+</button><span></span>
+        <button data-k="y-">左 Y−</button><span></span><button data-k="y+">右 Y+</button>
+        <span></span><button data-k="x-">近 X−</button><span></span>
+      </div>
+      <div class="vpad">
+        <button data-k="z+">升 Z+</button>
+        <button class="grip open" id="grip">爪子：张开</button>
+        <button data-k="z-">降 Z−</button>
+      </div>
+    </div>
+    <div class="hint">方向键 = 前后左右　PageUp / PageDown = 升降　空格 = 开合爪子（按住可以连续动）</div>
+  </div>
+</section>
+
+<footer><span id="foot">—</span><span>拖动旋转 · 滚轮缩放 · 双击复位视角</span></footer>
 </div>
 <script>
-const $id = (x) => document.getElementById(x);
-const badge = $id('badge'), stateEl = $id('state'), logEl = $id('log'), buildEl = $id('build');
-const form = $id('f'), input = $id('q'), btnRun = $id('b');
-const btnDemo = $id('demo'), btnReset = $id('reset');
+const $ = (id) => document.getElementById(id);
+const liveEl = $('live'), statusEl = $('status'), metaEl = $('meta'), footEl = $('foot');
+const tlEl = $('tl'), pauseBtn = $('pause');
+const panelAgent = $('panel-agent'), panelManual = $('panel-manual');
+const modeBtns = Array.from(document.querySelectorAll('#modes button'));
+const S = { mode: 'agent', paused: false, gripOpen: true };
 
 async function post(path, body) {
-  const opt = body
-    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-    : { method: 'POST' };
-  const r = await fetch(path, opt);
-  return r.json();
+  try {
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    return await r.json();
+  } catch (e) { return {}; }
 }
 
-function show(j) {
-  if (j.ok && j.plan) {
-    const p = j.plan;
-    logEl.textContent = `已收到指令
-目标：${p.target}
-放到：${p.place}
-坐标：${JSON.stringify(p.target_xy)}`;
-  } else {
-    logEl.textContent = '没听懂：' + (j.error || '未知原因');
-  }
+function setMode(m) {
+  S.mode = m;
+  modeBtns.forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
+  panelAgent.hidden = m !== 'agent';
+  panelManual.hidden = m !== 'manual';
 }
 
-async function run(text) {
-  btnRun.disabled = true;
-  logEl.textContent = '解析中……';
-  try { show(await post('/api/command', { text })); }
-  catch (e) { logEl.textContent = '请求失败：' + e; }
-  btnRun.disabled = false;
-}
+modeBtns.forEach((b) => b.addEventListener('click', async () => {
+  setMode(b.dataset.mode);
+  await post('/api/mode', { mode: b.dataset.mode });
+}));
+
+pauseBtn.addEventListener('click', async () => {
+  const r = await post('/api/pause', { paused: !S.paused });
+  S.paused = !!r.paused;
+  pauseBtn.textContent = S.paused ? '继续' : '暂停';
+  liveEl.textContent = S.paused ? '已暂停' : 'LIVE';
+  liveEl.classList.toggle('off', S.paused);
+});
+
+$('scene').addEventListener('click', () => post('/api/scene', {}));
+$('reset').addEventListener('click', () => post('/api/reset', {}));
+
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const t = $('q').value.trim();
+  if (!t) return;
+  if (S.mode !== 'agent') { setMode('agent'); await post('/api/mode', { mode: 'agent' }); }
+  $('run').disabled = true;
+  const r = await post('/api/agent', { text: t });
+  if (!r.ok) tlEl.textContent = '没接上：' + (r.error || '未知原因');
+  $('run').disabled = false;
+});
+
+// ---------- 手动：按住连续动 ----------
+const STEP = 0.012;
+const DIR = { 'x+': [STEP, 0, 0], 'x-': [-STEP, 0, 0], 'y+': [0, STEP, 0],
+              'y-': [0, -STEP, 0], 'z+': [0, 0, STEP], 'z-': [0, 0, -STEP] };
+const KEY2DIR = { ArrowUp: 'x+', ArrowDown: 'x-', ArrowLeft: 'y-', ArrowRight: 'y+',
+                  PageUp: 'z+', PageDown: 'z-' };
+const HELD = new Set();
+
+document.querySelectorAll('[data-k]').forEach((b) => {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); HELD.add(k); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) =>
+    b.addEventListener(ev, () => HELD.delete(k)));
+});
+
+setInterval(() => {
+  if (!HELD.size || S.mode !== 'manual' || S.paused) return;
+  let dx = 0, dy = 0, dz = 0;
+  for (const k of HELD) { const d = DIR[k]; if (d) { dx += d[0]; dy += d[1]; dz += d[2]; } }
+  post('/api/jog', { dx, dy, dz });
+}, 90);
+
+$('grip').addEventListener('click', async () => {
+  S.gripOpen = !S.gripOpen;
+  const b = $('grip');
+  b.textContent = '爪子：' + (S.gripOpen ? '张开' : '合上');
+  b.classList.toggle('open', S.gripOpen);
+  await post('/api/grip', { open: S.gripOpen });
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === ' ') { e.preventDefault(); $('grip').click(); return; }
+  if (e.key === 'p' || e.key === 'P') { pauseBtn.click(); return; }
+  const d = KEY2DIR[e.key];
+  if (d && S.mode === 'manual') { e.preventDefault(); HELD.add(d); }
+});
+window.addEventListener('keyup', (e) => { const d = KEY2DIR[e.key]; if (d) HELD.delete(d); });
 
 // ---------- 自由视角 ----------
-const stage = document.querySelector('.stage');
-const viewReset = $id('viewreset');
+const stage = $('stage');
 let drag = null;
-let pending = { daz: 0, del: 0, ddist: 0, dx: 0, dy: 0 };
+const pending = { daz: 0, del: 0, ddist: 0, dx: 0, dy: 0 };
 let flushTimer = null;
-
 function flushCamera() {
   flushTimer = null;
-  const p = pending;
-  pending = { daz: 0, del: 0, ddist: 0, dx: 0, dy: 0 };
-  fetch('/api/camera', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(p),
-  }).catch(() => {});
+  const p = Object.assign({}, pending);
+  pending.daz = pending.del = pending.ddist = pending.dx = pending.dy = 0;
+  fetch('/api/camera', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify(p) }).catch(() => {});
 }
-
 function queueCamera(patch) {
   for (const k in patch) pending[k] += patch[k];
   if (!flushTimer) flushTimer = setTimeout(flushCamera, 45);
 }
-
 stage.addEventListener('mousedown', (e) => {
   e.preventDefault();
   drag = { x: e.clientX, y: e.clientY, btn: e.button, shift: e.shiftKey };
   stage.classList.add('dragging');
 });
-
-window.addEventListener('mouseup', () => {
-  drag = null;
-  stage.classList.remove('dragging');
-});
-
+window.addEventListener('mouseup', () => { drag = null; stage.classList.remove('dragging'); });
 window.addEventListener('mousemove', (e) => {
   if (!drag) return;
-  const dx = e.clientX - drag.x;
-  const dy = e.clientY - drag.y;
-  drag.x = e.clientX;
-  drag.y = e.clientY;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
   if (drag.btn === 0 && !drag.shift) queueCamera({ daz: dx * 0.35, del: -dy * 0.35 });
-  else queueCamera({ dx, dy });
+  else queueCamera({ dx: dx, dy: dy });
 });
-
-stage.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  queueCamera({ ddist: e.deltaY * 0.0012 });
-}, { passive: false });
-
+stage.addEventListener('wheel', (e) => { e.preventDefault(); queueCamera({ ddist: e.deltaY * 0.0012 }); },
+                      { passive: false });
 stage.addEventListener('contextmenu', (e) => e.preventDefault());
-stage.addEventListener('dblclick', () => viewReset.click());
+stage.addEventListener('dblclick', () => fetch('/api/view_reset', { method: 'POST' }));
 
-viewReset.addEventListener('click', async () => {
-  await fetch('/api/view_reset', { method: 'POST' });
-});
-
-form.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const t = input.value.trim();
-  if (t) run(t);
-});
-
-btnDemo.addEventListener('click', async () => {
-  input.value = '把红色方块放到盘子上';
-  btnDemo.disabled = true;
-  try {
-    await post('/api/reset');
-    await new Promise((r) => setTimeout(r, 700));
-    await run(input.value);
-  } finally {
-    btnDemo.disabled = false;
+// ---------- 状态轮询 ----------
+function renderTimeline(s) {
+  let out = ['你说：' + s.agent_text];
+  out.push('计划：' + (s.agent_plan
+    ? s.agent_plan.steps.map((x, i) => (i + 1) + '. ' + x.tool).join('　')
+    : '（大模型正在拆解…）'));
+  const tr = (s.agent_trace || []).slice(-6);
+  if (tr.length) {
+    out.push('执行：');
+    for (const row of tr) {
+      const r = row.result || {};
+      const bad = r.error || r.ok === false;
+      const mark = bad ? '✗' : (r.ok === true ? '✓' : '·');
+      let note = '';
+      if (r.error) note = '　' + r.error;
+      else if (r.dist_mm !== undefined) note = '　离盘心 ' + r.dist_mm + ' mm';
+      if (r.attempts && r.attempts > 1) note += '（第 ' + r.attempts + ' 次尝试）';
+      out.push('　' + mark + ' ' + row.tool + note);
+    }
   }
-});
+  tlEl.textContent = out.join('\\n');
+}
 
-btnReset.addEventListener('click', async () => {
-  await post('/api/reset');
-  logEl.textContent = '已重置，可以再来一次。';
-});
-
-setInterval(async () => {
+async function poll() {
   try {
     const s = await (await fetch('/api/status')).json();
-    badge.textContent = 'LIVE · ' + s.frames + ' 帧 · ' + Math.round(s.uptime) + 's';
-    stateEl.textContent = s.message;
-    buildEl.textContent = '服务启动于 ' + s.version + '　步骤 ' + s.step + '/' + s.total_steps;
-    // 智能体模式：把「计划 → 每步结果」画出来，这是演示的主角
-    if (s.agent_text) {
-      const plan = s.agent_plan
-        ? s.agent_plan.steps.map((x, i) => (i + 1) + '. ' + x.tool).join('　')
-        : '（大模型正在拆解…）';
-      let html = '<b>你说</b>：' + s.agent_text + '<br><b>计划</b>：' + plan;
-      const tr = (s.agent_trace || []).slice(-6);
-      if (tr.length) {
-        html += '<br><b>执行</b>：';
-        for (const row of tr) {
-          const r = row.result || {};
-          const ok = r.ok === true || (r.error === undefined && r.ok === undefined);
-          const bad = r.error || r.ok === false;
-          const detail = r.dist_mm !== undefined ? (' ' + r.dist_mm + ' mm')
-                        : (r.error ? (' ' + r.error) : '');
-          const mark = bad ? '❌' : (r.ok === true ? '✅' : '·');
-          html += '<br>　' + mark + ' ' + row.tool + detail;
-        }
-      }
-      buildEl.innerHTML = html;
-    }
+    S.paused = !!s.paused;
+    statusEl.textContent = s.message;
+    metaEl.textContent = '方块 ' + s.cube[0].toFixed(2) + ',' + s.cube[1].toFixed(2) +
+      '　盘子 ' + s.plate[0].toFixed(2) + ',' + s.plate[1].toFixed(2) +
+      (s.scene ? '　场景 #' + s.scene : '');
+    liveEl.textContent = s.paused ? '已暂停' : 'LIVE';
+    liveEl.classList.toggle('off', s.paused);
+    pauseBtn.textContent = s.paused ? '继续' : '暂停';
+    footEl.textContent = s.frames + ' 帧　' + Math.round(s.uptime) + 's';
+    setMode(s.mode === 'manual' ? 'manual' : 'agent');
+    if (S.mode === 'agent' && s.agent_text) renderTimeline(s);
   } catch (e) {
-    badge.textContent = 'LIVE · 连接断开';
+    liveEl.textContent = '连接断开';
+    liveEl.classList.add('off');
   }
-}, 1000);
+}
+setInterval(poll, 700);
+poll();
 </script></body></html>"""
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -750,6 +980,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
+
+        def body() -> dict:
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                return json.loads(self.rfile.read(length).decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return {}
+
+        def reply(obj) -> None:
+            self._send(json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+
+        if path == "/api/pause":
+            payload = body()
+            reply(self.sim.set_paused(bool(payload.get("paused", True))))
+            return
+        if path == "/api/mode":
+            reply(self.sim.set_mode(str(body().get("mode", "agent"))))
+            return
+        if path == "/api/scene":
+            seed = body().get("seed")
+            reply(self.sim.new_scene(int(seed) if seed is not None else None))
+            return
+        if path == "/api/jog":
+            payload = body()
+            reply(self.sim.jog(float(payload.get("dx", 0.0)), float(payload.get("dy", 0.0)),
+                               float(payload.get("dz", 0.0))))
+            return
+        if path == "/api/grip":
+            reply(self.sim.set_grip(bool(body().get("open", True))))
+            return
         if path == "/api/camera":
             length = int(self.headers.get("Content-Length", 0))
             try:
@@ -838,6 +1099,7 @@ def main() -> int:
             print("``--agent`` 需要同时给 ``--policy``（智能体靠策略动手）")
             return 1
         sim.agent_enabled = True
+        sim.mode = "agent"
         print("智能体模式已开：网页会走「大模型拆计划 → 执行 → 失败回传重规划」")
     threading.Thread(target=sim.loop, daemon=True).start()
     Handler.sim = sim
