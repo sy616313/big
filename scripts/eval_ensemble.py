@@ -50,6 +50,8 @@ def main() -> int:
     ap.add_argument("--weights", type=float, nargs="+", default=None,
                     help="各成员权重（会归一化）。不给就是等权。用来验证"
                          "「三个模型变差其实是被不等权拖的」这个假设")
+    ap.add_argument("--relative", action="store_true",
+                    help="模型是拿 data/mixed_rel 训的（输出相对关节增量），评估时要把当前关节角加回去")
     ap.add_argument("--min-success", type=float, default=0.0,
                     help="成功率低于这个值就返回非 0 退出码（默认不卡）")
     args = ap.parse_args()
@@ -59,7 +61,8 @@ def main() -> int:
         return 1
 
     ens = EnsemblePolicy.from_paths(args.ckpt, exec_steps=args.exec_steps or None,
-                                    grip_mode=args.grip_mode, weights=args.weights)
+                                    grip_mode=args.grip_mode, weights=args.weights,
+                                    relative=args.relative)
     print(f"权重：{ens.weights}")
     dev = ens.device
     print(f"集成 {len(ens.members)} 个模型：{' + '.join(ens.names)}"

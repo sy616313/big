@@ -42,10 +42,14 @@ def main() -> int:
     ap.add_argument("--seed-base", type=int, default=EVAL_SEED_BASE)
     ap.add_argument("--single", action="store_true",
                     help="只跑第一次尝试（不重试），用来对照")
+    ap.add_argument("--relative", action="store_true",
+                    help="模型是拿 data/mixed_rel 训的（相对关节增量），推理时加回当前关节角")
     args = ap.parse_args()
 
-    ens = EnsemblePolicy.from_paths(args.ckpt, exec_steps=args.exec_steps or None)
-    alts = [] if args.single else [EnsemblePolicy([m]) for m in ens.members]
+    ens = EnsemblePolicy.from_paths(args.ckpt, exec_steps=args.exec_steps or None,
+                                    relative=args.relative)
+    alts = [] if args.single else [EnsemblePolicy([m], relative=args.relative)
+                                   for m in ens.members]
     print(f"第一次：{'+'.join(ens.names)}；"
           f"备用：{'、'.join('+'.join(a.names) for a in alts) or '无'}")
     print(f"{args.n_episodes} 局，种子 {args.seed_base} 起\n")

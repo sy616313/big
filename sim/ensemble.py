@@ -69,11 +69,12 @@ class EnsemblePolicy:
     """
 
     def __init__(self, members: list[dict], grip_mode: str = "mean",
-                 weights: list[float] | None = None) -> None:
+                 weights: list[float] | None = None, relative: bool = False) -> None:
         if not members:
             raise ValueError("集成至少需要一个模型")
         if grip_mode not in ("mean", "median", "median_all"):
             raise ValueError(f"grip_mode 只支持 mean / median / median_all，收到 {grip_mode}")
+        self.relative = relative        # 模型输出的是"相对当前关节的增量"，act() 里加回去
         if weights is not None:
             if len(weights) != len(members):
                 raise ValueError(f"权重个数 {len(weights)} 和模型个数 {len(members)} 不一致")
@@ -93,7 +94,8 @@ class EnsemblePolicy:
 
     @classmethod
     def from_paths(cls, paths, exec_steps: int | None = None,
-                   grip_mode: str = "mean", weights=None) -> "EnsemblePolicy":
+                   grip_mode: str = "mean", weights=None,
+                   relative: bool = False) -> "EnsemblePolicy":
         members = []
         for p in paths:
             p = Path(p).expanduser().resolve()   # 相对路径带反斜杠会被当成 hf repo id
@@ -111,7 +113,7 @@ class EnsemblePolicy:
             if m["dev"] != dev:
                 m["policy"].to(dev)
                 m["dev"] = dev
-        return cls(members, grip_mode=grip_mode, weights=weights)
+        return cls(members, grip_mode=grip_mode, weights=weights, relative=relative)
 
     @property
     def names(self) -> list[str]:
@@ -139,17 +141,24 @@ class EnsemblePolicy:
                                .float().cpu().numpy(), dtype=np.float64)
                     for _ in range(n)])
         if len(per_model) == 1:
-            return per_model[0]
-        if self.grip_mode == "median_all":
+            out = per_model[0]
+        elif self.grip_mode == "median_all":
             # 逐维中位数：对"某个模型跑偏"最稳健，条件是成员数 ≥ 3
-            return [np.median([o[i] for o in per_model], axis=0) for i in range(n)]
-        # 先各自转 float64 再平均：float32 平均会让个别步差一点，
-        # 混沌系统里这点差别能让一条轨迹多走一步，复现旧数字时对不上
-        out = [np.average([o[i] for o in per_model], axis=0, weights=self.weights)
-               for i in range(n)]
-        if self.grip_mode == "median":
-            # 夹爪那一维不要取平均：两个模型一个要合爪、一个还张着，平均出来半开——
-            # 抓取时刻这种"不干脆"的指令最容易变成"没夹起来"。改成取中位数（多数派）。
+            out = [np.median([o[i] for o in per_model], axis=0) for i in range(n)]
+        else:
+            # 先各自转 float64 再平均：float32 平均会让个别步差一点，
+            # 混沌系统里这点差别能让一条轨迹多走一步，复现旧数字时对不上
+            out = [np.average([o[i] for o in per_model], axis=0, weights=self.weights)
+                   for i in range(n)]
+            if self.grip_mode == "median":
+                # 夹爪那一维不要取平均：两个模型一个要合爪、一个还张着，平均出来半开——
+                # 抓取时刻这种"不干脆"的指令最容易变成"没夹起来"。改成取中位数（多数派）。
+                for i in range(n):
+                    out[i][4] = float(np.median([o[i][4] for o in per_model]))
+        if self.relative:
+            # 模型输出的是"相对当前关节的增量"，这里加回当前关节角（夹爪那维保持绝对）
+            base = np.asarray(raw_batch["observation.state"].detach().cpu()
+                              .numpy(), dtype=np.float64)[0][:4]
             for i in range(n):
-                out[i][4] = float(np.median([o[i][4] for o in per_model]))
+                out[i][:4] = out[i][:4] + base
         return out
