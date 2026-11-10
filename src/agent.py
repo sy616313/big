@@ -341,7 +341,9 @@ class Executor:
         p = np.array(self.env.plate_xyz())
         return {"ok": False, "steps": last.get("steps", 0), "attempts": len(plans),
                 "cube": [round(float(v), 3) for v in c],
-                "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1)}
+                "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1),
+                # 明着告诉大模型下一步该干嘛：它经常原地再抓一次，白费时间
+                "suggestion": "策略连着没抓起来，改用 expert_grasp_and_place（解析专家兜底）"}
 
     # ---- 执行计划 ----
     def run(self, plan: AgentPlan, verbose: bool = True) -> dict:

@@ -329,7 +329,7 @@ class Sim:
                 return result
 
             ex.run = run_and_trace                      # 让页面能看到每一步
-            result = ex.run_until_done(text, max_turns=2, verbose=False)
+            result = ex.run_until_done(text, max_turns=3, verbose=False)
             with self.lock:
                 self.agent_result = result
                 self.message = "智能体完成：成功" if result.get("ok") else "智能体完成：没做成"
