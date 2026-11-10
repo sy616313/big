@@ -156,9 +156,12 @@ class EnsemblePolicy:
                 for i in range(n):
                     out[i][4] = float(np.median([o[i][4] for o in per_model]))
         if self.relative:
-            # 模型输出的是"相对当前关节的增量"，这里加回当前关节角（夹爪那维保持绝对）
+            # 模型输出的是增量：第 0 步相对"当前关节角"，之后每一步相对"上一步的绝对动作"。
+            # 训练数据就是这么造的（scripts/make_relative_dataset.py），推理要按同样规则积回去。
+            # 之前写成"整块都加当前关节角"，第 1 步之后全是错的，实测直接 0/80。
             base = np.asarray(raw_batch["observation.state"].detach().cpu()
                               .numpy(), dtype=np.float64)[0][:4]
-            for i in range(n):
-                out[i][:4] = out[i][:4] + base
+            out[0][:4] = base + out[0][:4]
+            for i in range(1, n):
+                out[i][:4] = out[i - 1][:4] + out[i][:4]
         return out

@@ -7,10 +7,12 @@ r"""把绝对关节目标改成「相对当前关节角」的动作空间，生�
     代价很小：数据只改 action 那一列，网络和训练脚本都不用动。
 
 具体做法（关节 4 维做差，夹爪那维保持绝对）：
-    新 action[:4] = 旧 action[:4] - observation.state[:4]
-    新 action[4]  = 旧 action[4]（张/合是离散的，做差没意义）
+    第 0 帧：rel = act - state            （相对"当前关节角"）
+    第 k 帧：rel = act[k] - act[k-1]      （相对"上一步的绝对动作"）
+    推理时按同样规则积回去（sim/ensemble.py 里 relative=True 那段）。
 
-推理时要把差值加回去（`sim/relative.py` 里包了一层，见 RelativeActionPolicy）。
+    注意：早先写成"每一帧都减自己那一帧的 state"，推理时整块都加当前关节角——
+    第 1 步之后全错，实测 0/80。定稿用的是上面的递推写法。
 
 跑法：
     & "...python.exe" scripts\make_relative_dataset.py --src data\mixed_v1 --out data\mixed_rel
@@ -65,11 +67,15 @@ def main() -> int:
     for ep_idx in range(src.num_episodes):
         ep = src.meta.episodes[ep_idx]
         start, end = int(ep["dataset_from_index"]), int(ep["dataset_to_index"])
+        prev_act = None                      # 上一步的绝对动作，用来做递推差
         for i in range(start, end):
             row = src[i]
             state = np.asarray(row["observation.state"], dtype=np.float32)
             act = np.asarray(row["action"], dtype=np.float32).copy()
-            act[:4] = act[:4] - state[:4]        # 只把 4 个关节改成相对
+            rel = act.copy()
+            anchor = state if prev_act is None else prev_act
+            rel[:4] = act[:4] - anchor[:4]   # 只有 4 个关节改成增量，夹爪保持绝对
+            prev_act = act
             # 取出来的图是 (C,H,W) 的 float 张量，写回去要 (H,W,C) 的 uint8
             img = row["observation.images.front"]
             if hasattr(img, "permute"):
@@ -81,7 +87,7 @@ def main() -> int:
             out.add_frame({
                 "observation.images.front": img,
                 "observation.state": state,
-                "action": act,
+                "action": rel,
                 "task": row["task"],
             })
             n_frames += 1
