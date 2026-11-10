@@ -23,7 +23,23 @@ from pathlib import Path
 
 import numpy as np
 
-__all__ = ["EnsemblePolicy", "load_one"]
+__all__ = ["EnsemblePolicy", "load_one", "crossfade"]
+
+
+def crossfade(prev, chunk, k: int = 2):
+    """把新预测的头几步和"上一条真正执行的动作"做过渡，去掉换块时的跳变。
+
+    实测：块内每步关节最大变化 0.020 rad，换块那一步 0.059 rad（2.9 倍，最大 0.16 rad
+    ≈ 9°）——每 0.42 秒抽一下，就是演示里看着"抽搐"的原因，真机上更不可接受。
+    只过渡前 k 步，夹爪那一维不动（否则合爪会变软）。
+    """
+    if prev is None or not chunk:
+        return chunk
+    out = [np.array(a, dtype=np.float64, copy=True) for a in chunk]
+    for i in range(min(k, len(out))):
+        w = (i + 1) / (k + 1)
+        out[i][:4] = (1.0 - w) * np.asarray(prev, dtype=np.float64)[:4] + w * out[i][:4]
+    return out
 
 
 def load_one(path: Path):

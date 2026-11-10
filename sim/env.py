@@ -95,6 +95,17 @@ PLATE_PAD_X = (0.030, 0.340)
 PLATE_PAD_Y = (-0.155, 0.065)
 MIN_CUBE_PLATE_DIST = 0.115     # 方块和盘子至少隔这么远，否则方块本来就落在盘上
 
+# 判定成功用的阈值：盘子半径 58 mm、方块半宽 21 mm —— 方块中心离盘心不超过 37 mm，
+# 方块才是整个落在盘面上，不会有一半悬在盘沿外
+SUCCESS_TOL_XY = 0.037
+UPRIGHT_MIN = 0.90              # 方块竖轴与竖直方向夹角 < 26° 才算放平了
+
+
+def cube_upright(env) -> bool:
+    """方块是不是平平地放着的（不是斜靠在盘沿上）。"""
+    rot = np.asarray(env.data.body("cube").xmat, dtype=float).reshape(3, 3)
+    return float(abs(rot[2, 2])) >= UPRIGHT_MIN
+
 
 def expert_waypoints(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> list[dict]:
     """专家轨迹的关键点。采样和采集共用同一个函数，保证「能验证的」就是「会执行的」。"""
@@ -329,10 +340,13 @@ class PickPlaceEnv:
         return self.renderer.render()
 
     # ---------- 判定 ----------
-    def success(self, tol_xy: float = 0.045) -> bool:
-        """方块落到盘子里、并且夹爪已经松开才算成功。
+    def success(self, tol_xy: float = SUCCESS_TOL_XY) -> bool:
+        """方块真的落在盘子里、放平了、夹爪也松开了，才算成功。
 
-        盘子位置每局都会变，所以这里必须读实际位置，不能用常量。
+        盘子半径 58 mm、方块半宽 21 mm，所以"整块都在盘面上"要求中心离盘心
+        不超过 58-21 = 37 mm。以前用 45 mm，会出现"方块一半悬在盘沿外、还斜着"
+        也被判成功的情况（演示时一眼就能看出来，不能这么算）。
+        盘子位置每局都会变，所以必须读实际位置，不能用常量。
         """
         c = self.cube_xyz()
         p = self.plate_xyz()
@@ -340,7 +354,9 @@ class PickPlaceEnv:
             return False
         if not (0.020 <= c[2] <= 0.045):     # 盘面 z≈0.013，方块中心≈0.034
             return False
-        return float(self.state()[4]) > 0.008  # 手指张开了，说明真放下了
+        if float(self.state()[4]) <= 0.008:  # 手指张开了，说明真放下了
+            return False
+        return cube_upright(self)            # 没歪着靠盘沿上
 
     def close(self) -> None:
         if self.renderer is not None:

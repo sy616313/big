@@ -32,7 +32,7 @@ from sim.runtime import ensure_utf8  # noqa: E402
 
 ensure_utf8()
 
-from sim.ensemble import EnsemblePolicy  # noqa: E402
+from sim.ensemble import EnsemblePolicy, crossfade  # noqa: E402
 from sim.env import MAX_EPISODE_STEPS, PickPlaceEnv  # noqa: E402
 from eval_act import EVAL_SEED_BASE, save_montage, to_tensor  # noqa: E402
 
@@ -82,6 +82,7 @@ def main() -> int:
         peak = 0.0
         frames: list[np.ndarray] = []
         queue: list[np.ndarray] = []
+        prev_act = None
         while env.steps < MAX_EPISODE_STEPS:
             if not queue:
                 batch = {
@@ -89,8 +90,9 @@ def main() -> int:
                     "observation.state": torch.from_numpy(obs["state"]).float()
                         .unsqueeze(0).to(dev),
                 }
-                queue = ens.act(batch, int(ens.config.n_action_steps))
+                queue = list(crossfade(prev_act, ens.act(batch, int(ens.config.n_action_steps))))
             act = queue.pop(0)
+            prev_act = act
             if not np.all(np.isfinite(act)):
                 reasons["动作出 NaN"] = reasons.get("动作出 NaN", 0) + 1
                 break

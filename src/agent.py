@@ -26,6 +26,8 @@ from typing import Any
 
 import numpy as np
 
+from sim.ensemble import crossfade
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -223,6 +225,7 @@ class Executor:
         self.pre, self.post, self.device = pre, post, device
         self.alternates = alternates or []   # 主策略失败后依次换的备用策略
         self.seed = seed          # 复位时用同一个种子，保证"重来一局"还是同一个场景
+        self._last_act = None     # 上一条真正执行的动作，换块时用来做过渡
         self.trace: list[dict] = []
 
     # ---- 工具实现 ----
@@ -247,8 +250,24 @@ class Executor:
                 "moved": [round(float(now[0] - p[0]), 3), round(float(now[1] - p[1]), 3)]}
 
     def home(self) -> dict:
-        # 用同一个种子复位：等于"这一局重来"，场景不变，否则每次重试都在比不同难度的题
-        self.env.reset(seed=self.seed) if self.seed is not None else self.env.reset()
+        """机械臂平滑回到待机位（不清场景）。
+
+        以前这里直接 reset 整局：手臂会"瞬移"回起点，方块也瞬间回到原位——
+        录视频时看着像卡了一下，真机上更不可能这么干。改成用逆解插值走过去，
+        只把手臂收回来，方块留在原地（被碰偏了就偏了，下一步重抓会自己找）。
+        """
+        from sim.env import GRIP_OPEN, HOME_XYZ
+        from sim.kinematics import Unreachable, ik
+
+        try:
+            q_home = np.asarray(ik(*HOME_XYZ), dtype=float)
+        except Unreachable:            # 理论上不会发生，真发生了就直接原地张爪
+            return {"home": False, "error": "待机位算不出逆解"}
+        q_now = np.asarray(self.env.state()[:4], dtype=float)
+        steps = 24
+        for i in range(1, steps + 1):
+            q = q_now + (q_home - q_now) * (i / steps)
+            self.env.step(np.array([*q, GRIP_OPEN], dtype=np.float64))
         return {"home": True}
 
     def expert_grasp_and_place(self) -> dict:
@@ -304,7 +323,10 @@ class Executor:
                         policy.reset()
                         queue = [self.post(policy.select_action(b)).squeeze(0)
                                  .float().cpu().numpy() for _ in range(POLICY_EXEC)]
+                # 换块处两步过渡：不然每 0.5 秒目标跳一下，视觉上像抽搐
+                queue = crossfade(self._last_act, queue)
             act = np.asarray(queue.pop(0), dtype=np.float64)
+            self._last_act = act
             self.env.step(act)
             steps += 1
             if self.env.success():

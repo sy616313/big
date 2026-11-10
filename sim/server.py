@@ -31,7 +31,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SCENE = ROOT / "sim" / "arm_scene.xml"
 
-from sim.env import CUBE_REST_Z, HOME_XYZ, PLATE_Z, sample_scene  # noqa: E402
+from sim.env import (  # noqa: E402
+    CUBE_REST_Z,
+    HOME_XYZ,
+    PLATE_Z,
+    SUCCESS_TOL_XY,
+    UPRIGHT_MIN,
+    sample_scene,
+)
 from sim.kinematics import Unreachable, ik  # noqa: E402
 from src.llm import parse as parse_instruction  # noqa: E402
 
@@ -186,7 +193,7 @@ class Sim:
         集成逻辑走 sim/ensemble.py —— 和 scripts/eval_ensemble.py 是同一份代码，
         所以网页里跑出来的就是评估里测过的那个东西，不会出现「网页 76%、报告 84%」。
         """
-        from sim.ensemble import EnsemblePolicy
+        from sim.ensemble import EnsemblePolicy, crossfade
 
         if isinstance(ckpts, (str, Path)):
             ckpts = [ckpts]
@@ -222,17 +229,27 @@ class Sim:
         """取一整块动作放进队列。连调 N 次只算一次前向（靠策略内部的队列）。"""
         batch = self._policy_batch(renderer)      # 原始 batch，归一化交给各成员自己
         n = int(getattr(self.policy.config, "n_action_steps", 40))
+        acts = self.policy.act(batch, n)
+        # 换块处做两步过渡，否则每 0.42 秒目标跳一下，看着像抽搐
         self.policy_queue = [np.asarray(a, dtype=np.float64)
-                             for a in self.policy.act(batch, n)]
+                             for a in crossfade(getattr(self, "_last_act", None), acts)]
         self.policy_consumed = 0
 
     def _policy_done(self) -> bool:
-        """只判"方块在盘子上且夹爪松开了"，和训练/评估的判据一致。"""
+        """方块真的落在盘子中间、放平了、夹爪也松开了——和 sim/env.py 的判据一致。
+
+        阈值 37 mm 是"方块整个落在盘面上"的几何上限（盘半径 58 - 方块半宽 21）。
+        用 45 mm 会出现一半悬在盘沿外还判成功的情况，演示时一眼就能看出来。
+        """
         c = np.array(self.body_xyz("cube"))
         p = np.array(self.body_xyz("plate"))
         grip = float(self.data.qpos[self.arm_qadr[4]])
-        return (float(np.hypot(c[0] - p[0], c[1] - p[1])) < 0.045
-                and 0.020 <= c[2] <= 0.045 and grip > 0.008)
+        if float(np.hypot(c[0] - p[0], c[1] - p[1])) > SUCCESS_TOL_XY:
+            return False
+        if not (0.020 <= c[2] <= 0.045) or grip <= 0.008:
+            return False
+        rot = np.asarray(self.data.body("cube").xmat, dtype=float).reshape(3, 3)
+        return float(abs(rot[2, 2])) >= UPRIGHT_MIN
 
     # ---------- 给智能体当"环境"用的接口 ----------
     # src/agent.py 的 Executor 只要求下面这几个方法，名字和 PickPlaceEnv 保持一致，
@@ -560,6 +577,7 @@ class Sim:
                     if not self.policy_queue or self.policy_consumed >= POLICY_EXEC:
                         self._query_policy(renderer)
                     act = self.policy_queue.pop(0) if self.policy_queue else HOME_CTRL[0:5]
+                    self._last_act = act
                     self.policy_consumed += 1
                     self.policy_steps += 1
                     grip = float(np.clip(act[4], 0.0, GRIP_OPEN[0]))
