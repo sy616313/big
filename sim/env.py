@@ -98,13 +98,21 @@ MIN_CUBE_PLATE_DIST = 0.115     # 方块和盘子至少隔这么远，否则方�
 # 判定成功用的阈值：盘子半径 58 mm、方块半宽 21 mm —— 方块中心离盘心不超过 37 mm，
 # 方块才是整个落在盘面上，不会有一半悬在盘沿外
 SUCCESS_TOL_XY = 0.037
-UPRIGHT_MIN = 0.90              # 方块竖轴与竖直方向夹角 < 26° 才算放平了
+UPRIGHT_MIN = 0.90              # 某一个局部轴与竖直方向夹角 < 26° 才算"落在面上"
 
 
 def cube_upright(env) -> bool:
-    """方块是不是平平地放着的（不是斜靠在盘沿上）。"""
+    """方块是不是平放在某个面上（不是斜靠着盘沿）。
+
+    注意：这是个**立方体**，绕 x 或 y 转 90° 之后照样是平放的，只是换了个面着地。
+    早先的实现只看了局部 z 轴（rot[2,2]），把"翻了个面"误判成"歪了"——
+    网页上就会出现方块端端正正落在盘心、却报没做成的情况（实测 dist 0.2~0.8 mm 仍判失败）。
+    正确做法：三个局部轴里只要有一个接近竖直，就说明它是在某个面上。
+    """
     rot = np.asarray(env.data.body("cube").xmat, dtype=float).reshape(3, 3)
-    return float(abs(rot[2, 2])) >= UPRIGHT_MIN
+    # rot 是 local→world 的旋转矩阵，三列就是三个局部轴在世界坐标下的方向；
+    # 它们的 z 分量就是 rot[2, 0..2]
+    return float(np.max(np.abs(rot[2, :]))) >= UPRIGHT_MIN
 
 
 def expert_waypoints(cube_xyz, plate_xy: tuple[float, float] = PLATE_XY) -> list[dict]:

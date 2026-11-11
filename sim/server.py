@@ -256,7 +256,8 @@ class Sim:
         if not (0.020 <= c[2] <= 0.045) or grip <= 0.008:
             return False
         rot = np.asarray(self.data.body("cube").xmat, dtype=float).reshape(3, 3)
-        return float(abs(rot[2, 2])) >= UPRIGHT_MIN
+        # 立方体绕 x/y 转 90° 依然是"平放在某个面上"，三个局部轴里有一个竖直就行
+        return float(np.max(np.abs(rot[2, :]))) >= UPRIGHT_MIN
 
     # ---------- 给智能体当"环境"用的接口 ----------
     # src/agent.py 的 Executor 只要求下面这几个方法，名字和 PickPlaceEnv 保持一致，
@@ -588,6 +589,11 @@ class Sim:
 
     def loop(self) -> None:
         renderer = mujoco.Renderer(self.model, height=H, width=W)
+        # 策略专用渲染器：直接按训练时的 320x240 渲。
+        # 以前是拿 800x600 的画面缩到 320x240 再喂策略——插值出来的像素和训练时
+        # 原生渲的分布不一样（边缘更糊），属于白送的域偏移。
+        policy_renderer = mujoco.Renderer(self.model, height=POLICY_IMG[1],
+                                          width=POLICY_IMG[0])
         step = self.model.opt.timestep
         per_frame = max(1, int(round((1.0 / FPS) / step)))
         with self.lock:
@@ -660,11 +666,10 @@ class Sim:
             renderer.update_scene(self.data, camera=self.cam)
             buf = io.BytesIO()
             Image.fromarray(renderer.render()).save(buf, format="JPEG", quality=82)
-            # 顺手给策略渲一帧（训练同款相机）。渲染只在这一个线程里做，
+            # 顺手给策略渲一帧（训练同款相机 + 同款分辨率）。渲染只在这一个线程里做，
             # 智能体线程只读缓存——两个线程抢一个 Renderer 会取到烂图。
-            renderer.update_scene(self.data, camera=POLICY_CAMERA)
-            policy_frame = np.asarray(Image.fromarray(renderer.render()).resize(
-                POLICY_IMG, Image.BILINEAR)).copy()
+            policy_renderer.update_scene(self.data, camera=POLICY_CAMERA)
+            policy_frame = np.asarray(policy_renderer.render()).copy()
             with self.lock:
                 self._jpeg = buf.getvalue()
                 self._policy_frame = policy_frame
