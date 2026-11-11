@@ -374,6 +374,11 @@ class Sim:
         return {"state": self.state()}
 
 
+    def set_message(self, text: str) -> None:
+        """给执行器用的进展播报（网页状态条）。"""
+        with self.lock:
+            self.message = text
+
     def body_xyz(self, name: str) -> list[float]:
         return [float(v) for v in self.data.body(name).xpos]
 

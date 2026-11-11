@@ -315,6 +315,7 @@ class Executor:
 
         policy.reset()
         steps = 0
+        hover = 0
         queue: list[np.ndarray] = []
         self._last_act = None      # 清掉上一次尝试的尾巴，否则交叉淡入会把新策略的第一帧带偏
         while steps < MAX_POLICY_STEPS:
@@ -345,11 +346,21 @@ class Executor:
             steps += 1
             if self.env.success():
                 break
+            # 悬停保护：方块已经被举到盘子正上方、却迟迟不松手。
+            # 这是 ACT 的一个典型失败模式：它看到"已经到位了"就不再输出松爪，
+            # 手臂就一直举着不动（网页上表现为卡住）。这时直接收工，交给 _settle 松手。
+            c, p = np.array(self.env.cube_xyz()), np.array(self.env.plate_xyz())
+            over_plate = (np.hypot(c[0] - p[0], c[1] - p[1]) < 0.030 and 0.028 < c[2] < 0.090)
+            hover = hover + 1 if over_plate else 0
+            if hover >= 20:
+                break
             # 早停：成功的轨迹一般 90~180 步就把方块抬起来了。
             # 阈值原来是 150 步，比实测的均值还紧——有些"慢一点但能成"的局被它提前掐掉了。
             # 放到 250 步，只拦真正抓空的情况。
             if steps >= 250 and float(self.env.cube_xyz()[2]) < 0.045:
                 break
+            if steps % 60 == 0:
+                self._note(f"策略执行中（第 {steps} 步）")
         self._settle()
         c = np.array(self.env.cube_xyz())
         p = np.array(self.env.plate_xyz())
@@ -359,6 +370,12 @@ class Executor:
                 "z": round(float(c[2]), 3),
                 "upright": bool(cube_upright(self.env)),
                 "grip": round(float(self.env.state()[4]), 4)}
+
+    def _note(self, text: str) -> None:
+        """把进展写到网页的状态条上（如果宿主环境支持）。"""
+        setter = getattr(self.env, "set_message", None)
+        if callable(setter):
+            setter(text)
 
     def _settle(self, steps: int = SETTLE_STEPS) -> None:
         """判定之前先"松手等一下"。
