@@ -187,22 +187,27 @@ class Sim:
         return self.data.site_xpos[self.site].copy()
 
     # ---------- 策略接管 ----------
-    def load_policy(self, ckpts) -> None:
+    def load_policy(self, ckpts, retry_with=None) -> None:
         """加载训练好的策略：给一个就单模型，给多个就集成（动作取平均）。
 
         集成逻辑走 sim/ensemble.py —— 和 scripts/eval_ensemble.py 是同一份代码，
         所以网页里跑出来的就是评估里测过的那个东西，不会出现「网页 76%、报告 84%」。
         """
-        from sim.ensemble import EnsemblePolicy, crossfade
+        from sim.ensemble import EnsemblePolicy
 
         if isinstance(ckpts, (str, Path)):
             ckpts = [ckpts]
         ens = EnsemblePolicy.from_paths(ckpts)
+        # 主策略失败后依次换的备用策略。可以是别的模型（--retry-with），
+        # 不能只是"同一个模型再来一次"——策略是确定性的，同一局重放等于重放，白跑。
+        alternates = []
+        for p in (retry_with or []):
+            others = EnsemblePolicy.from_paths([p])
+            alternates.append(EnsemblePolicy([others.members[0]]))
         with self.lock:
             self.policy = ens
-            # 主策略（集成）失败后依次换单模型再试——成员对象共用，不额外占显存
-            self.policy_alternates = ([EnsemblePolicy([m]) for m in ens.members]
-                                      if len(ens.members) > 1 else [])
+            self.policy_alternates = alternates or ([EnsemblePolicy([m]) for m in ens.members]
+                                                    if len(ens.members) > 1 else [])
             self.policy_pre = None            # 每个成员自己的归一化在 act() 里做
             self.policy_post = None
             self.policy_device = ens.device
@@ -210,7 +215,9 @@ class Sim:
             self.policy_consumed = 0
             self.policy_steps = 0
             tag = " + ".join(ens.names)
-            self.message = f"策略已加载：{tag}" + ("（集成）" if len(ens.members) > 1 else "")
+            extra = ("（备用：" + "、".join("+".join(a.names) for a in self.policy_alternates) + "）"
+                     if self.policy_alternates else "")
+            self.message = f"策略已加载：{tag}" + ("（集成）" if len(ens.members) > 1 else "") + extra
 
     def _policy_batch(self, renderer) -> dict:
         """按训练时的相机和尺寸取一帧，拼成策略要的 batch。"""
@@ -1126,6 +1133,9 @@ def main() -> int:
                     help="指向 .../pretrained_model 目录：让网页跑训练好的 ACT，"
                          "而不是逆解轨迹。不传就用逆解。"
                          "给两个以上目录就是集成（每个模型各自预测，动作取平均）。")
+    ap.add_argument("--retry-with", type=Path, nargs="+", default=None,
+                    help="主策略失败后依次换的单模型（原地重试）。注意必须是**不同**的模型："
+                         "策略是确定性的，同一个模型重放一遍结果完全一样，白等")
     ap.add_argument("--agent", action="store_true",
                     help="智能体模式：网页里每一句话先让大模型拆成工具计划，执行时逐步记录，"
                          "失败会把真实结果回传给大模型重新出方案。需要同时给 --policy。")
@@ -1146,7 +1156,7 @@ def main() -> int:
         if missing:
             print("找不到策略：\n  " + "\n  ".join(missing))
             return 1
-        sim.load_policy(args.policy)
+        sim.load_policy(args.policy, retry_with=args.retry_with)
         print("策略模式：" + " + ".join(str(p) for p in args.policy))
     if args.agent:
         if args.policy is None:

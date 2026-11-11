@@ -281,9 +281,16 @@ class Executor:
         用法是「学习策略先上，失败了再切它」——工业上常见的兜底结构，
         不是作弊，但必须说清楚哪一段是学出来的、哪一段是备用。
         """
-        from sim.env import ScriptedExpert
+        from sim.env import ScriptedExpert, cube_upright
 
-        self.home()
+        # 专家兜底先"这一局重来"：策略失败时方块常被碰歪/碰倒，专家是照着
+        # "方块平放在桌上"算轨迹的，接着歪的抓会一路歪到落点（实测出现过
+        # 方块正落在盘心、但斜着倒在那里，被判没做成，重试两次都一样）。
+        # 复位不清场景：Sim 会把方块和盘子摆回这一局开始时的位置。
+        if self.seed is not None:
+            self.env.reset(seed=self.seed)
+        elif hasattr(self.env, "reset"):
+            self.env.reset()
         expert = ScriptedExpert(self.env)
         expert.reset()                      # 注意：构造函数不会自己 reset，忘了这步 plan 是空的
         for _ in range(MAX_POLICY_STEPS):
@@ -296,7 +303,11 @@ class Executor:
         p = np.array(self.env.plate_xyz())
         return {"ok": bool(good), "fallback": "expert",
                 "cube": [round(float(v), 3) for v in c],
-                "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1)}
+                "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1),
+                # 判定为什么没过：距离够了却还报失败，就是这几项之一
+                "z": round(float(c[2]), 3),
+                "upright": bool(cube_upright(self.env)),
+                "grip": round(float(self.env.state()[4]), 4)}
 
     def _run_policy_attempt(self, policy) -> dict:
         """一个策略在一次复位后跑一遍完整抓放。"""
@@ -333,9 +344,10 @@ class Executor:
             steps += 1
             if self.env.success():
                 break
-            # 早停：成功的轨迹一般 90~130 步就把方块抬起来了。
-            # 到 150 步还没离桌，基本可以断定这次抓空，没必要空跑到 400 步。
-            if steps >= 150 and float(self.env.cube_xyz()[2]) < 0.050:
+            # 早停：成功的轨迹一般 90~180 步就把方块抬起来了。
+            # 阈值原来是 150 步，比实测的均值还紧——有些"慢一点但能成"的局被它提前掐掉了。
+            # 放到 250 步，只拦真正抓空的情况。
+            if steps >= 250 and float(self.env.cube_xyz()[2]) < 0.045:
                 break
         self._settle()
         return {"ok": bool(self.env.success()), "steps": steps}
