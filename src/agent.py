@@ -313,6 +313,8 @@ class Executor:
         policy.reset()
         steps = 0
         hover = 0
+        close_at = None      # 合爪发生在第几步，用来判断有没有抓空
+        peak_z = 0.0         # 方块被抬到过的最高点，用来区分"抓空"和"慢"
         queue: list[np.ndarray] = []
         self._last_act = None      # 清掉上一次尝试的尾巴，否则交叉淡入会把新策略的第一帧带偏
         while steps < MAX_POLICY_STEPS:
@@ -343,18 +345,39 @@ class Executor:
             steps += 1
             if self.env.success():
                 break
+            c, p = np.array(self.env.cube_xyz()), np.array(self.env.plate_xyz())
+
+            # 抓空检测：合爪之后一看没夹住就立刻收工，别在桌上继续比划。
+            # 失败里一大半是"没夹起来"，而模型抓空之后还会继续执行完剩下的一百多步，
+            # 手臂在桌面上来回蹭——看着别扭，也白等 10 秒钟。
+            # 判据：合爪那一刻起 22 步（约 1 秒）之内方块必须离开桌面（z > 35 mm），
+            # 抬不起来就认定这次抓空，马上交给重试逻辑。
+            if float(act[4]) < 0.010:            # 这一帧在下合爪指令
+                if close_at is None:
+                    close_at = steps
+            else:
+                close_at = None                  # 又张开了，重新计时
+            if close_at is not None and steps - close_at >= 22:
+                if float(c[2]) < 0.035:
+                    self._note(f"没夹起来（第 {steps} 步就发现了），换一个策略重来")
+                    break
+                close_at = None                  # 已经抬起来了，后面不再管
+            peak_z = max(peak_z, float(c[2]))
+
             # 悬停保护：方块已经被举到盘子正上方、却迟迟不松手。
             # 这是 ACT 的一个典型失败模式：它看到"已经到位了"就不再输出松爪，
             # 手臂就一直举着不动（网页上表现为卡住）。这时直接收工，交给 _settle 松手。
-            c, p = np.array(self.env.cube_xyz()), np.array(self.env.plate_xyz())
             over_plate = (np.hypot(c[0] - p[0], c[1] - p[1]) < 0.030 and 0.028 < c[2] < 0.090)
             hover = hover + 1 if over_plate else 0
             if hover >= 20:
+                self._note("到位了但一直不松手，直接松开")
                 break
-            # 早停：成功的轨迹一般 90~180 步就把方块抬起来了。
-            # 阈值原来是 150 步，比实测的均值还紧——有些"慢一点但能成"的局被它提前掐掉了。
-            # 放到 250 步，只拦真正抓空的情况。
-            if steps >= 250 and float(self.env.cube_xyz()[2]) < 0.045:
+            # 兜底：150 步了方块还没被抬离桌面，就是没抓起来（不是"慢"，是真没成）。
+            # 用"历史最高点"判断，而不是当前高度——抬起来又掉了也算抓到过。
+            if steps >= 150 and peak_z < 0.045:
+                self._note(f"150 步还没把方块抬起来，判定抓空（第 {steps} 步收工）")
+                break
+            if steps == 250:
                 break
             if steps % 60 == 0:
                 self._note(f"策略执行中（第 {steps} 步）")

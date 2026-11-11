@@ -588,12 +588,10 @@ class Sim:
                 self.message = "完成：方块已放到盘子上"
 
     def loop(self) -> None:
+        # 只用一个 Renderer。试过"主画面 800x600 + 策略画面 320x240 各一个"，
+        # 跑几局之后 mujoco.dll 直接访问违例崩掉（0xc0000005，GL 上下文多实例共享不稳）。
+        # 稳定性优先：一个渲染器，出两帧（主画面 + 降到策略尺寸的帧）。
         renderer = mujoco.Renderer(self.model, height=H, width=W)
-        # 策略专用渲染器：直接按训练时的 320x240 渲。
-        # 以前是拿 800x600 的画面缩到 320x240 再喂策略——插值出来的像素和训练时
-        # 原生渲的分布不一样（边缘更糊），属于白送的域偏移。
-        policy_renderer = mujoco.Renderer(self.model, height=POLICY_IMG[1],
-                                          width=POLICY_IMG[0])
         step = self.model.opt.timestep
         per_frame = max(1, int(round((1.0 / FPS) / step)))
         with self.lock:
@@ -666,10 +664,13 @@ class Sim:
             renderer.update_scene(self.data, camera=self.cam)
             buf = io.BytesIO()
             Image.fromarray(renderer.render()).save(buf, format="JPEG", quality=82)
-            # 顺手给策略渲一帧（训练同款相机 + 同款分辨率）。渲染只在这一个线程里做，
+            # 顺手给策略渲一帧（训练同款相机）。渲染只在这一个线程里做，
             # 智能体线程只读缓存——两个线程抢一个 Renderer 会取到烂图。
-            policy_renderer.update_scene(self.data, camera=POLICY_CAMERA)
-            policy_frame = np.asarray(policy_renderer.render()).copy()
+            # 用 BOX（面积平均）缩图：比双线性更接近"原生低分辨率渲染"的样子，
+            # 减少喂给策略的画面和训练分布的差别。
+            renderer.update_scene(self.data, camera=POLICY_CAMERA)
+            policy_frame = np.asarray(Image.fromarray(renderer.render()).resize(
+                POLICY_IMG, Image.BOX)).copy()
             with self.lock:
                 self._jpeg = buf.getvalue()
                 self._policy_frame = policy_frame
