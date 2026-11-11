@@ -59,6 +59,7 @@ TOOLS: dict[str, dict] = {
 
 POLICY_EXEC = 10          # 策略每执行多少步重规划一次（实测最优）
 MAX_POLICY_STEPS = 400
+SETTLE_STEPS = 25         # 判成功之前多跑几步，让夹爪真的张开（否则会误报没做成）
 
 # 真正会改变场景的工具。只有这些出现在计划里，一轮跑通才算"做成了"——
 # 只调 look 也返回 ok，那是"看过了"，不是"做完了"。
@@ -289,6 +290,7 @@ class Executor:
             if expert.done:
                 break
             self.env.step(expert.act())
+        self._settle()                      # 松手后等一下再判，否则会误报"没做成"
         good = self.env.success()
         c = np.array(self.env.cube_xyz())
         p = np.array(self.env.plate_xyz())
@@ -335,7 +337,22 @@ class Executor:
             # 到 150 步还没离桌，基本可以断定这次抓空，没必要空跑到 400 步。
             if steps >= 150 and float(self.env.cube_xyz()[2]) < 0.050:
                 break
+        self._settle()
         return {"ok": bool(self.env.success()), "steps": steps}
+
+    def _settle(self, steps: int = SETTLE_STEPS) -> None:
+        """判定之前先"松手等一下"。
+
+        踩过的坑：策略/专家最后一步刚把爪子张开，物理上手指还没真的分开，
+        这时候读到的夹爪开度还是闭合值，`success()` 里"夹爪已松开"那条就不成立——
+        网页上会出现"方块明明已经端正放在盘子里，却报没做成"。
+        实测只要多跑 25 步（约 0.5 秒）就稳定了。
+        """
+        from sim.env import GRIP_OPEN
+        base = np.asarray(self.env.state()[:4], dtype=np.float64)
+        act = np.array([*base, float(GRIP_OPEN)], dtype=np.float64)
+        for _ in range(steps):
+            self.env.step(act)
 
     def grasp_and_place(self) -> dict:
         """先上主策略；没成就在同一局重来一次，换下一个策略。
