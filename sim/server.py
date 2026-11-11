@@ -406,6 +406,12 @@ class Sim:
                 self.pause_gate.clear()
                 self.message = "已暂停（物理冻结，可以切模式）"
             else:
+                # 暂停期间手臂可能被别的线程动过（比如智能体刚被中止），
+                # 继续之前把下发点重新对齐到真实位置，避免恢复的那一帧跳一下
+                tip = self.tip().copy()
+                self._cmd_p = tip
+                if self.mode == "manual":
+                    self.manual_target = tip
                 self.pause_gate.set()
                 self.message = "继续"
             return {"ok": True, "paused": self.paused}
@@ -425,7 +431,16 @@ class Sim:
                 self.policy_steps = 0
                 self.waypoints = []
                 self.wp_index = 0
-                self.manual_target = self.tip().copy()
+                # 关键：把"当前下发点"重新锚到机械臂真实位置，并沿用当前夹爪开度。
+                # 不锚的话 _cmd_p 还停在进智能体模式之前的位置，手动模式第一帧就会
+                # 让手臂瞬移过去——手里夹着的方块直接被甩飞（实测踩到过）。
+                tip = self.tip().copy()
+                self.manual_target = tip
+                self._cmd_p = tip
+                # 沿用当前**指令**上的夹爪开度，不是量出来的指头位置：
+                # 夹着方块时指头被撑开在 0.011 左右，而指令是 0.004（一直捏着）。
+                # 拿测量值当指令会把指头松开 7 mm，方块直接掉下去（实测踩到过）。
+                self.manual_grip = float(np.clip(self.data.ctrl[5], 0.0, GRIP_OPEN[0]))
                 self.message = ("手动模式" + ("（还暂停着，点「继续」才能动）" if self.paused
                                              else "：方向键移动，空格开合爪子"))
             elif mode == "agent":
@@ -525,6 +540,12 @@ class Sim:
     def _manual_step(self, per_frame: int) -> None:
         """手动模式：按 0.1 m/s 朝点动目标走，夹爪用 self.manual_grip。"""
         dt = per_frame * self.model.opt.timestep
+        tip = self.tip()
+        # 手臂被外部动过（智能体中止、暂停期间被推）就跟丢了下发点，先重新对齐，
+        # 否则这一步会算出"从旧下发点飞向目标"的大跳变，夹着的东西会被甩出去
+        if float(np.linalg.norm(tip - self._cmd_p)) > 0.03:
+            self._cmd_p = tip.copy()
+            self.manual_target = tip.copy()
         delta = self.manual_target - self._cmd_p
         dist = float(np.linalg.norm(delta))
         if dist > 1e-9:
@@ -657,6 +678,8 @@ class Sim:
                 "tip": [round(float(v), 3) for v in self.tip()],
                 "mode": self.mode,
                 "paused": self.paused,
+                "grip": round(float(np.clip(self.data.qpos[self.arm_qadr[4]], 0.0,
+                                            GRIP_OPEN[0])), 4),
                 "scene": self.scene_count,
                 "success": bool(self._policy_done()),
                 "version": self.version,
@@ -854,11 +877,17 @@ setInterval(() => {
   post('/api/jog', { dx, dy, dz });
 }, 90);
 
-$('grip').addEventListener('click', async () => {
-  S.gripOpen = !S.gripOpen;
+let lastGripClick = 0;
+function setGripLabel(open) {
+  S.gripOpen = open;
   const b = $('grip');
-  b.textContent = '爪子：' + (S.gripOpen ? '张开' : '合上');
-  b.classList.toggle('open', S.gripOpen);
+  b.textContent = '爪子：' + (open ? '张开' : '合上');
+  b.classList.toggle('open', open);
+}
+
+$('grip').addEventListener('click', async () => {
+  lastGripClick = Date.now();
+  setGripLabel(!S.gripOpen);
   await post('/api/grip', { open: S.gripOpen });
 });
 
@@ -941,6 +970,13 @@ async function poll() {
     pauseBtn.textContent = s.paused ? '继续' : '暂停';
     footEl.textContent = s.frames + ' 帧　' + Math.round(s.uptime) + 's';
     setMode(s.mode === 'manual' ? 'manual' : 'agent');
+    if (S.mode === 'manual' && s.grip !== undefined && Date.now() - lastGripClick > 1500) {
+      // 从别的模式切过来时，爪子的真实开度可能和按钮显示的不一样（比如正夹着方块），
+      // 以服务器为准同步一下，省得第一次点按钮反而把东西放开。
+      // 阈值 0.015：夹着方块时指头被撑开在 0.010~0.012，完全张开是 0.018
+      const open = s.grip > 0.015;
+      if (open !== S.gripOpen) setGripLabel(open);
+    }
     if (S.mode === 'agent' && s.agent_text) renderTimeline(s);
   } catch (e) {
     liveEl.textContent = '连接断开';
