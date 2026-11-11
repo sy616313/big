@@ -280,17 +280,14 @@ class Executor:
 
         用法是「学习策略先上，失败了再切它」——工业上常见的兜底结构，
         不是作弊，但必须说清楚哪一段是学出来的、哪一段是备用。
+
+        **不做整局复位**：真机上没人给你把方块摆回原位。这里只做"松爪 + 收回待机位"，
+        然后从方块**当前**所在的姿势算轨迹。方块被碰歪了就按歪的算——歪到抓不起来，
+        那就是真失败，不靠复位掩盖。
         """
         from sim.env import ScriptedExpert, cube_upright
 
-        # 专家兜底先"这一局重来"：策略失败时方块常被碰歪/碰倒，专家是照着
-        # "方块平放在桌上"算轨迹的，接着歪的抓会一路歪到落点（实测出现过
-        # 方块正落在盘心、但斜着倒在那里，被判没做成，重试两次都一样）。
-        # 复位不清场景：Sim 会把方块和盘子摆回这一局开始时的位置。
-        if self.seed is not None:
-            self.env.reset(seed=self.seed)
-        elif hasattr(self.env, "reset"):
-            self.env.reset()
+        self.home()                          # 松爪收回待机位（不改场景）
         expert = ScriptedExpert(self.env)
         expert.reset()                      # 注意：构造函数不会自己 reset，忘了这步 plan 是空的
         for _ in range(MAX_POLICY_STEPS):
@@ -391,23 +388,19 @@ class Executor:
         for _ in range(steps):
             self.env.step(act)
 
-    def _reset_episode(self) -> None:
-        """原地重试用：先松爪，再把这一局复位。
+    def _prepare_retry(self) -> None:
+        """原地重试前的准备：松爪 → 平滑收回待机位 → 清掉换块过渡的参考。
 
-        为什么要复位：第一次没抓成时，手臂可能还夹着方块、方块也可能被碰歪。
-        接着在这种现场上让第二个策略上，等于让它在一道被改过的题上做——
-        实测会出现"第二次明明放好了却判失败"，因为手里/地上根本没有原位的方块。
-        必须"松爪 → 方块盘子回原位 → 再抓"，才和离线评估里那次"换模型重试"等价。
+        **不复位场景**。真机上没人给你把方块摆回去；正确做法是放开手里可能夹着的
+        东西、把手臂收到待机位重新看一眼，然后从方块现在的位置接着抓。
+        以前这里调 env.reset() 把整局摆回去，网页上看着"方块瞬移回原位"，真机做不到。
         """
         from sim.env import GRIP_OPEN
         base = np.asarray(self.env.state()[:4], dtype=np.float64)
         act = np.array([*base, float(GRIP_OPEN)], dtype=np.float64)
-        for _ in range(15):          # 先松手，免得复位时把方块一起带走
+        for _ in range(15):              # 先松手，别把方块带着走
             self.env.step(act)
-        if self.seed is not None:
-            self.env.reset(seed=self.seed)
-        else:
-            self.env.reset()         # Sim 会把方块/盘子摆回这一局开始时的位置
+        self.home()                      # 平滑收回待机位（不改场景）
         self._last_act = None
 
     def grasp_and_place(self) -> dict:
@@ -423,7 +416,7 @@ class Executor:
         last = {}
         for i, pol in enumerate(plans):
             if i > 0:
-                self._reset_episode()     # 松爪 + 场景复位，给下一个策略一个干净的现场
+                self._prepare_retry()     # 松爪 + 收回待机位（不复位场景），从方块当前位置再抓
             last = self._run_policy_attempt(pol)
             if last["ok"]:
                 c = np.array(self.env.cube_xyz())
