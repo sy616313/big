@@ -316,6 +316,7 @@ class Executor:
         policy.reset()
         steps = 0
         queue: list[np.ndarray] = []
+        self._last_act = None      # 清掉上一次尝试的尾巴，否则交叉淡入会把新策略的第一帧带偏
         while steps < MAX_POLICY_STEPS:
             if not queue:
                 # 只在要重新预测时取一次画面：网页那边渲染一帧不便宜，不能每步都取
@@ -350,7 +351,14 @@ class Executor:
             if steps >= 250 and float(self.env.cube_xyz()[2]) < 0.045:
                 break
         self._settle()
-        return {"ok": bool(self.env.success()), "steps": steps}
+        c = np.array(self.env.cube_xyz())
+        p = np.array(self.env.plate_xyz())
+        from sim.env import cube_upright
+        return {"ok": bool(self.env.success()), "steps": steps,
+                "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1),
+                "z": round(float(c[2]), 3),
+                "upright": bool(cube_upright(self.env)),
+                "grip": round(float(self.env.state()[4]), 4)}
 
     def _settle(self, steps: int = SETTLE_STEPS) -> None:
         """判定之前先"松手等一下"。
@@ -366,12 +374,30 @@ class Executor:
         for _ in range(steps):
             self.env.step(act)
 
-    def grasp_and_place(self) -> dict:
-        """先上主策略；没成就在同一局重来一次，换下一个策略。
+    def _reset_episode(self) -> None:
+        """原地重试用：先松爪，再把这一局复位。
 
-        为什么允许重试：单次成功率只有 76%，不同模型的失败场景并不重合——
-        实测 160 局里，"两个模型集成"漏掉的 25 局中，有 25 局能被单独某一个救回来。
-        重试前必须复位（回待机位 + 方块盘子回原位），否则是在乱糟糟的状态上硬抓。
+        为什么要复位：第一次没抓成时，手臂可能还夹着方块、方块也可能被碰歪。
+        接着在这种现场上让第二个策略上，等于让它在一道被改过的题上做——
+        实测会出现"第二次明明放好了却判失败"，因为手里/地上根本没有原位的方块。
+        必须"松爪 → 方块盘子回原位 → 再抓"，才和离线评估里那次"换模型重试"等价。
+        """
+        from sim.env import GRIP_OPEN
+        base = np.asarray(self.env.state()[:4], dtype=np.float64)
+        act = np.array([*base, float(GRIP_OPEN)], dtype=np.float64)
+        for _ in range(15):          # 先松手，免得复位时把方块一起带走
+            self.env.step(act)
+        if self.seed is not None:
+            self.env.reset(seed=self.seed)
+        else:
+            self.env.reset()         # Sim 会把方块/盘子摆回这一局开始时的位置
+        self._last_act = None
+
+    def grasp_and_place(self) -> dict:
+        """先上主策略；没成就换下一个策略，在同一场景里重来一次。
+
+        为什么重试要换模型：策略是确定性的，同一个模型、同一个场景重放一遍
+        结果逐帧相同（方块还是掉在同一个地方）。只有换成不同的模型才有意义。
         """
         if self.policy is None:
             raise PlanError("这个执行器没加载策略，不能抓放")
@@ -380,7 +406,7 @@ class Executor:
         last = {}
         for i, pol in enumerate(plans):
             if i > 0:
-                self.home()          # 同一局重来，场景不变
+                self._reset_episode()     # 松爪 + 场景复位，给下一个策略一个干净的现场
             last = self._run_policy_attempt(pol)
             if last["ok"]:
                 c = np.array(self.env.cube_xyz())
@@ -393,6 +419,7 @@ class Executor:
         return {"ok": False, "steps": last.get("steps", 0), "attempts": len(plans),
                 "cube": [round(float(v), 3) for v in c],
                 "dist_mm": round(float(np.hypot(c[0] - p[0], c[1] - p[1])) * 1000, 1),
+                "z": last.get("z"), "upright": last.get("upright"), "grip": last.get("grip"),
                 # 明着告诉大模型下一步该干嘛：它经常原地再抓一次，白费时间
                 "suggestion": "策略连着没抓起来，改用 expert_grasp_and_place（解析专家兜底）"}
 
